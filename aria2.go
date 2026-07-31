@@ -112,6 +112,7 @@ type Aria2Engine struct {
 	shutdownTimeout time.Duration
 	mu              sync.Mutex
 	gids            map[string]string
+	lock            *os.File
 }
 
 func NewAria2Engine(endpoint, secret string) *Aria2Engine {
@@ -157,18 +158,30 @@ func (e *Aria2Engine) Shutdown() error {
 	_, _ = e.client.call(ctx, "aria2.saveSession")
 	_, _ = e.client.call(ctx, "aria2.shutdown")
 	if e.cmd == nil {
+		e.releaseLock()
 		return nil
 	}
 	done := make(chan error, 1)
 	go func() { done <- e.cmd.Wait() }()
 	select {
 	case err := <-done:
+		e.releaseLock()
 		return err
 	case <-ctx.Done():
 		_ = e.cmd.Process.Kill()
 		<-done
+		e.releaseLock()
 		return nil
 	}
+}
+
+func (e *Aria2Engine) releaseLock() {
+	if e.lock == nil {
+		return
+	}
+	_ = e.lock.Close()
+	_ = os.Remove(e.lock.Name())
+	e.lock = nil
 }
 
 type ManagedAria2Config struct {
@@ -196,6 +209,17 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 	if err := os.Chmod(config.DataDirectory, 0700); err != nil {
 		return nil, fmt.Errorf("protect aria2 data directory: %w", err)
 	}
+	lock, err := os.OpenFile(filepath.Join(config.DataDirectory, "engine.lock"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("aria2 engine is already running or its lock is unavailable: %w", err)
+	}
+	lockClosed := false
+	defer func() {
+		if !lockClosed {
+			_ = lock.Close()
+			_ = os.Remove(lock.Name())
+		}
+	}()
 	if err := os.MkdirAll(config.DownloadDirectory, 0700); err != nil {
 		return nil, fmt.Errorf("create download directory: %w", err)
 	}
@@ -234,6 +258,8 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 	engine := NewAria2Engine(fmt.Sprintf("http://127.0.0.1:%d/jsonrpc", port), secret)
 	engine.cmd = cmd
 	engine.shutdownTimeout = config.ShutdownTimeout
+	engine.lock = lock
+	lockClosed = true
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
@@ -246,5 +272,7 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 	}
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
+	_ = lock.Close()
+	_ = os.Remove(lock.Name())
 	return nil, fmt.Errorf("aria2 RPC did not become ready: %w", lastErr)
 }

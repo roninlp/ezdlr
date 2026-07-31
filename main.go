@@ -20,8 +20,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		log.Fatal(err)
+	}
 	engine, err := NewManagedAria2(ManagedAria2Config{
-		BinaryPath:        "aria2c",
+		BinaryPath:        filepath.Join(filepath.Dir(executable), "aria2c"),
 		DataDirectory:     filepath.Join(dataDirectory, "ezdlr", "aria2"),
 		DownloadDirectory: "Downloads",
 	})

@@ -79,3 +79,11 @@ form.addEventListener("submit", async (event) => {
 void refresh().catch((error: unknown) => {
   message.textContent = `Unable to load the queue: ${String(error)}`;
 });
+
+const refreshTimer = window.setInterval(() => {
+  void refresh().catch((error: unknown) => {
+    message.textContent = `Unable to refresh the queue: ${String(error)}`;
+  });
+}, 1000);
+
+window.addEventListener("beforeunload", () => window.clearInterval(refreshTimer));
