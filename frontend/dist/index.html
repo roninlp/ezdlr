@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ezdlr</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">LOCAL DOWNLOAD QUEUE</div>
+        <h1>ezdlr</h1>
+        <p>Keep direct downloads moving without keeping a terminal open.</p>
+      </header>
+      <section class="panel">
+        <form id="add-form">
+          <label for="url-input">Add a direct link</label>
+          <div class="input-row">
+            <input id="url-input" type="url" placeholder="https://example.com/file.zip" required />
+            <button type="submit">Add to queue</button>
+          </div>
+          <p id="message" role="status"></p>
+        </form>
+      </section>
+      <section class="queue-section">
+        <div class="section-heading"><h2>Queue</h2><span>FIFO</span></div>
+        <div id="queue-list" class="queue-list"></div>
+      </section>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "name": "ezdlr-frontend",
+  "private": true,
+  "scripts": {
+    "build": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
