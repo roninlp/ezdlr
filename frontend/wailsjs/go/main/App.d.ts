@@ -4,6 +4,18 @@ import {main} from '../models';
 
 export function AddURL(arg1:string):Promise<main.DownloadItem>;
 
+export function Cancel(arg1:string):Promise<void>;
+
 export function Configuration():Promise<main.Configuration>;
+
+export function MoveDown(arg1:string):Promise<void>;
+
+export function MoveUp(arg1:string):Promise<void>;
+
+export function Pause(arg1:string):Promise<void>;
+
+export function Resume(arg1:string):Promise<void>;
+
+export function Retry(arg1:string):Promise<void>;
 
 export function Snapshot():Promise<main.ServiceSnapshot>;

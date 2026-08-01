@@ -21,13 +21,14 @@ export namespace main {
 	export class DownloadItem {
 	    id: string;
 	    url: string;
+	    gid?: string;
 	    state: string;
 	    destination: string;
 	    addedAt: string;
-	    gid: string;
 	    totalBytes: number;
 	    completedBytes: number;
 	    downloadSpeed: number;
+	    attempts: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new DownloadItem(source);
@@ -37,13 +38,14 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.url = source["url"];
+	        this.gid = source["gid"];
 	        this.state = source["state"];
 	        this.destination = source["destination"];
 	        this.addedAt = source["addedAt"];
-	        this.gid = source["gid"];
 	        this.totalBytes = source["totalBytes"];
 	        this.completedBytes = source["completedBytes"];
 	        this.downloadSpeed = source["downloadSpeed"];
+	        this.attempts = source["attempts"];
 	    }
 	}
 	export class ServiceSnapshot {

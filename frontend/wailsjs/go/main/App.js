@@ -6,8 +6,32 @@ export function AddURL(arg1) {
   return window['go']['main']['App']['AddURL'](arg1);
 }
 
+export function Cancel(arg1) {
+  return window['go']['main']['App']['Cancel'](arg1);
+}
+
 export function Configuration() {
   return window['go']['main']['App']['Configuration']();
+}
+
+export function MoveDown(arg1) {
+  return window['go']['main']['App']['MoveDown'](arg1);
+}
+
+export function MoveUp(arg1) {
+  return window['go']['main']['App']['MoveUp'](arg1);
+}
+
+export function Pause(arg1) {
+  return window['go']['main']['App']['Pause'](arg1);
+}
+
+export function Resume(arg1) {
+  return window['go']['main']['App']['Resume'](arg1);
+}
+
+export function Retry(arg1) {
+  return window['go']['main']['App']['Retry'](arg1);
 }
 
 export function Snapshot() {

@@ -2,8 +2,10 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
@@ -24,15 +26,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	engine, err := NewManagedAria2(ManagedAria2Config{
-		BinaryPath:        filepath.Join(filepath.Dir(executable), "aria2c"),
-		DataDirectory:     filepath.Join(dataDirectory, "ezdlr", "aria2"),
-		DownloadDirectory: "Downloads",
-	})
-	if err != nil {
-		log.Fatal(err)
+	var downloadEngine DownloadEngine
+	if wailsBindings {
+		downloadEngine = NewFakeEngine()
+	} else {
+		binaryPath, err := resolveAria2Binary(executable)
+		if err != nil {
+			log.Fatal(err)
+		}
+		downloadEngine, err = NewManagedAria2(ManagedAria2Config{
+			BinaryPath:        binaryPath,
+			DataDirectory:     filepath.Join(dataDirectory, "ezdlr", "aria2"),
+			DownloadDirectory: "Downloads",
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
-	app := NewApp(NewDownloadService(engine))
+	app := NewApp(NewDownloadService(downloadEngine))
 
 	err = wails.Run(&options.App{
 		Title:     "ezdlr",
@@ -54,4 +65,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func resolveAria2Binary(executable string) (string, error) {
+	bundled := filepath.Join(filepath.Dir(executable), "aria2c")
+	if _, err := os.Stat(bundled); err == nil {
+		return bundled, nil
+	}
+	if system, err := exec.LookPath("aria2c"); err == nil {
+		return system, nil
+	}
+	return "", fmt.Errorf("aria2c not found beside %s or on PATH", executable)
 }
