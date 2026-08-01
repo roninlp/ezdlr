@@ -27,3 +27,15 @@ func (a *App) Snapshot() ServiceSnapshot {
 func (a *App) Configuration() Configuration {
 	return a.service.Configuration()
 }
+
+func (a *App) MoveUp(id string) error { return a.service.MoveUp(id) }
+
+func (a *App) MoveDown(id string) error { return a.service.MoveDown(id) }
+
+func (a *App) Pause(id string) error { return a.service.Pause(id) }
+
+func (a *App) Resume(id string) error { return a.service.Resume(id) }
+
+func (a *App) Cancel(id string) error { return a.service.Cancel(id) }
+
+func (a *App) Retry(id string) error { return a.service.Retry(id) }

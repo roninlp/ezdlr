@@ -120,7 +120,7 @@ func NewAria2Engine(endpoint, secret string) *Aria2Engine {
 }
 
 func (e *Aria2Engine) Add(rawURL, destination string) error {
-	result, err := e.client.call(context.Background(), "aria2.addUri", []any{rawURL}, map[string]string{"dir": destination, "check-certificate": "true"})
+	result, err := e.client.call(context.Background(), "aria2.addUri", []any{rawURL}, map[string]string{"dir": destination, "check-certificate": "true", "pause": "true", "split": "4", "max-connection-per-server": "4"})
 	if err != nil {
 		return err
 	}
@@ -150,6 +150,21 @@ func (e *Aria2Engine) Status(gid string) (EngineStatus, error) {
 		return EngineStatus{}, errors.New("aria2 returned an invalid status")
 	}
 	return status.engineStatus(), nil
+}
+
+func (e *Aria2Engine) Pause(gid string) error {
+	_, err := e.client.call(context.Background(), "aria2.pause", gid)
+	return err
+}
+
+func (e *Aria2Engine) Resume(gid string) error {
+	_, err := e.client.call(context.Background(), "aria2.unpause", gid)
+	return err
+}
+
+func (e *Aria2Engine) Cancel(gid string) error {
+	_, err := e.client.call(context.Background(), "aria2.remove", gid)
+	return err
 }
 
 func (e *Aria2Engine) Shutdown() error {

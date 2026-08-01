@@ -2,7 +2,40 @@ package main
 
 import (
 	"testing"
+	"time"
 )
+
+type queueFakeEngine struct {
+	items map[string]EngineStatus
+	gids  map[string]string
+	next  int
+}
+
+func newQueueFakeEngine() *queueFakeEngine {
+	return &queueFakeEngine{items: make(map[string]EngineStatus), gids: make(map[string]string)}
+}
+
+func (e *queueFakeEngine) Add(url, destination string) error {
+	e.next++
+	gid := formatID(e.next)
+	e.items[gid] = EngineStatus{GID: gid, Status: StatePaused}
+	e.gids[url] = gid
+	return nil
+}
+func (e *queueFakeEngine) Shutdown() error { return nil }
+func (e *queueFakeEngine) GID(url string) string {
+	return e.gids[url]
+}
+func (e *queueFakeEngine) Status(gid string) (EngineStatus, error) { return e.items[gid], nil }
+func (e *queueFakeEngine) Pause(gid string) error {
+	e.items[gid] = EngineStatus{GID: gid, Status: StatePaused}
+	return nil
+}
+func (e *queueFakeEngine) Resume(gid string) error {
+	e.items[gid] = EngineStatus{GID: gid, Status: StateActive}
+	return nil
+}
+func (e *queueFakeEngine) Cancel(gid string) error { delete(e.items, gid); return nil }
 
 func TestAddURLCreatesQueuedItemAndUsesConfiguredDestination(t *testing.T) {
 	engine := NewFakeEngine()
@@ -67,5 +100,116 @@ func TestShutdownClosesEngine(t *testing.T) {
 	}
 	if !engine.shutdown {
 		t.Fatal("engine was not shut down")
+	}
+}
+
+func TestQueueSchedulesThreeAndProgressesFIFO(t *testing.T) {
+	engine := newQueueFakeEngine()
+	service := NewDownloadService(engine)
+	first, _ := service.AddURL("https://example.com/1")
+	second, _ := service.AddURL("https://example.com/2")
+	third, _ := service.AddURL("https://example.com/3")
+	fourth, _ := service.AddURL("https://example.com/4")
+
+	snapshot := service.Snapshot()
+	for _, item := range snapshot.Items[:3] {
+		if item.State != StateActive {
+			t.Fatalf("item %s state = %q, want active", item.ID, item.State)
+		}
+	}
+	if snapshot.Items[3].State != StateQueued {
+		t.Fatalf("fourth state = %q, want queued", snapshot.Items[3].State)
+	}
+	engine.items[first.GID] = EngineStatus{GID: first.GID, Status: StateComplete, TotalBytes: 10, CompletedBytes: 10}
+	snapshot = service.Snapshot()
+	if snapshot.Items[3].ID != fourth.ID || snapshot.Items[3].State != StateActive {
+		t.Fatalf("queue did not progress: %#v", snapshot.Items)
+	}
+	if snapshot.Items[1].ID != second.ID || snapshot.Items[2].ID != third.ID {
+		t.Fatalf("active order changed: %#v", snapshot.Items)
+	}
+}
+
+func TestQueueLifecycleControlsPreserveItemSemantics(t *testing.T) {
+	engine := newQueueFakeEngine()
+	service := NewDownloadService(engine)
+	item, _ := service.AddURL("https://example.com/file")
+	if err := service.Pause(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Snapshot().Items[0].State; got != StatePaused {
+		t.Fatalf("paused state = %q", got)
+	}
+	if err := service.Resume(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Cancel(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.Snapshot().Items) != 0 {
+		t.Fatal("cancel should remove only the queue item")
+	}
+}
+
+func TestQueuedItemsMoveWithoutReorderingActiveItems(t *testing.T) {
+	engine := newQueueFakeEngine()
+	service := NewDownloadService(engine)
+	first, _ := service.AddURL("https://example.com/1")
+	second, _ := service.AddURL("https://example.com/2")
+	third, _ := service.AddURL("https://example.com/3")
+	fourth, _ := service.AddURL("https://example.com/4")
+	fifth, _ := service.AddURL("https://example.com/5")
+	if err := service.MoveDown(fourth.ID); err != nil {
+		t.Fatal(err)
+	}
+	items := service.Snapshot().Items
+	if items[0].ID != first.ID || items[1].ID != second.ID || items[2].ID != third.ID || items[3].ID != fifth.ID || items[4].ID != fourth.ID {
+		t.Fatalf("queue order = %#v", items)
+	}
+	if err := service.MoveUp(fourth.ID); err != nil {
+		t.Fatal(err)
+	}
+	if service.Snapshot().Items[3].ID != fourth.ID {
+		t.Fatal("move up did not restore FIFO order")
+	}
+}
+
+func TestQueueRetriesTransientFailuresAndStopsAtLimit(t *testing.T) {
+	engine := newQueueFakeEngine()
+	service := NewDownloadService(engine)
+	_, _ = service.AddURL("https://example.com/file")
+	for attempt := 1; attempt <= 3; attempt++ {
+		current := service.Snapshot().Items[0]
+		engine.items[current.GID] = EngineStatus{GID: current.GID, Status: StateFailed}
+		service.Snapshot()
+		time.Sleep(retryDelay(attempt) + 10*time.Millisecond)
+		service.Snapshot()
+		if attempt < 3 && service.Snapshot().Items[0].State != StateActive {
+			t.Fatalf("attempt %d did not retry", attempt)
+		}
+	}
+	if got := service.Snapshot().Items[0].State; got != StateFailed {
+		t.Fatalf("exhausted state = %q, want failed", got)
+	}
+	if service.Snapshot().Items[0].Attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", service.Snapshot().Items[0].Attempts)
+	}
+}
+
+func TestFailedDownloadDoesNotBlockLaterWorkAndCanBeRetried(t *testing.T) {
+	engine := newQueueFakeEngine()
+	service := NewDownloadService(engine)
+	failed, _ := service.AddURL("https://example.com/failed")
+	later, _ := service.AddURL("https://example.com/later")
+	engine.items[failed.GID] = EngineStatus{GID: failed.GID, Status: StateFailed}
+	snapshot := service.Snapshot()
+	if snapshot.Items[1].ID != later.ID || snapshot.Items[1].State != StateActive {
+		t.Fatalf("later item did not progress: %#v", snapshot.Items)
+	}
+	if err := service.Retry(failed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Snapshot().Items[0].State; got != StateActive {
+		t.Fatalf("manual retry state = %q, want active", got)
 	}
 }
