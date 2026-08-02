@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
@@ -26,6 +25,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	downloadDirectory, err := defaultDownloadDirectory()
+	if err != nil {
+		log.Fatal(err)
+	}
 	var downloadEngine DownloadEngine
 	if wailsBindings {
 		downloadEngine = NewFakeEngine()
@@ -37,7 +40,7 @@ func main() {
 		downloadEngine, err = NewManagedAria2(ManagedAria2Config{
 			BinaryPath:        binaryPath,
 			DataDirectory:     filepath.Join(dataDirectory, "ezdlr", "aria2"),
-			DownloadDirectory: "Downloads",
+			DownloadDirectory: downloadDirectory,
 		})
 		if err != nil {
 			log.Fatal(err)
@@ -48,6 +51,7 @@ func main() {
 	if err := service.Restore(); err != nil {
 		log.Fatal(err)
 	}
+	service.config.DownloadDirectory = downloadDirectory
 	service.Start()
 	app := NewApp(service)
 
@@ -66,6 +70,10 @@ func main() {
 		Bind:             []interface{}{app},
 		Linux: &linux.Options{
 			WindowIsTranslucent: false,
+			// WebKitGTK's Wayland DMABUF renderer is not reliable on all
+			// supported Mesa/driver combinations. Software compositing keeps
+			// the app usable without requiring a launcher environment override.
+			WebviewGpuPolicy: linux.WebviewGpuPolicyNever,
 		},
 	})
 	if err != nil {
@@ -74,12 +82,22 @@ func main() {
 }
 
 func resolveAria2Binary(executable string) (string, error) {
-	bundled := filepath.Join(filepath.Dir(executable), "aria2c")
-	if _, err := os.Stat(bundled); err == nil {
-		return bundled, nil
+	bundledPaths := []string{
+		filepath.Join(filepath.Dir(executable), "aria2c"),
+		filepath.Join(filepath.Dir(executable), "..", "lib", "ezdlr", "aria2c"),
 	}
-	if system, err := exec.LookPath("aria2c"); err == nil {
-		return system, nil
+	for _, bundled := range bundledPaths {
+		if info, err := os.Stat(bundled); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+			return bundled, nil
+		}
 	}
-	return "", fmt.Errorf("aria2c not found beside %s or on PATH", executable)
+	return "", fmt.Errorf("bundled aria2c not found for %s", executable)
+}
+
+func defaultDownloadDirectory() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+	return filepath.Join(home, "Downloads"), nil
 }

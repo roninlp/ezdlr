@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ezdlr
+Comment=Manage direct HTTP and HTTPS downloads
+Exec=ezdlr
+Icon=ezdlr
+Terminal=false
+Categories=Network;FileTransfer;
+StartupWMClass=ezdlr
+X-GNOME-SingleWindow=true

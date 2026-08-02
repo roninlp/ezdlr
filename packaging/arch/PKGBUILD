@@ -1,0 +1,40 @@
+pkgname=ezdlr
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Small native download manager for direct HTTP and HTTPS links'
+arch=('x86_64')
+url='https://github.com/roninlp/ezdlr'
+license=('MIT')
+depends=('glib2' 'gtk3' 'webkit2gtk-4.1' 'openssl')
+makedepends=('go' 'npm' 'base-devel' 'cmake' 'python')
+source=(
+  "git+https://github.com/roninlp/ezdlr.git#tag=v${pkgver}"
+  "aria2-1.37.0.tar.xz::https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz"
+)
+sha256sums=('SKIP' '60a420ad7085eb616cb6e2bdf0a7206d68ff3d37fb5a956dc44242eb2f79b66b')
+
+_aria2_ver=1.37.0
+
+prepare() {
+  cd "$srcdir/aria2-$_aria2_ver"
+  ./configure --prefix=/usr --disable-shared --enable-static --with-openssl
+}
+
+build() {
+  cd "$srcdir/aria2-$_aria2_ver"
+  make
+
+  cd "$srcdir/ezdlr/frontend"
+  npm ci
+  npm run build
+
+  cd "$srcdir/ezdlr"
+  go build -tags webkit2_41 -trimpath -ldflags="-s -w" -o "$srcdir/ezdlr" .
+}
+
+package() {
+  install -Dm755 "$srcdir/ezdlr" "$pkgdir/usr/bin/ezdlr"
+  install -Dm755 "$srcdir/aria2-$_aria2_ver/src/aria2c" "$pkgdir/usr/lib/ezdlr/aria2c"
+  install -Dm644 "$srcdir/ezdlr/packaging/arch/ezdlr.desktop" "$pkgdir/usr/share/applications/ezdlr.desktop"
+  install -Dm644 "$srcdir/ezdlr/packaging/arch/ezdlr.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/ezdlr.svg"
+}
