@@ -43,7 +43,13 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	app := NewApp(NewDownloadService(downloadEngine))
+	store := NewJSONStateStore(filepath.Join(dataDirectory, "ezdlr", "state.json"))
+	service := NewDownloadServiceWithStore(downloadEngine, store)
+	if err := service.Restore(); err != nil {
+		log.Fatal(err)
+	}
+	service.Start()
+	app := NewApp(service)
 
 	err = wails.Run(&options.App{
 		Title:     "ezdlr",

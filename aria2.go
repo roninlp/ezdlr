@@ -80,15 +80,30 @@ func (c *aria2RPCClient) call(ctx context.Context, method string, args ...any) (
 }
 
 type aria2StatusResult struct {
-	GID             string `json:"gid"`
-	Status          string `json:"status"`
-	TotalLength     string `json:"totalLength"`
-	CompletedLength string `json:"completedLength"`
-	DownloadSpeed   string `json:"downloadSpeed"`
+	GID             string            `json:"gid"`
+	Status          string            `json:"status"`
+	TotalLength     string            `json:"totalLength"`
+	CompletedLength string            `json:"completedLength"`
+	DownloadSpeed   string            `json:"downloadSpeed"`
+	Files           []aria2FileResult `json:"files"`
+}
+
+type aria2FileResult struct {
+	Path string `json:"path"`
+	URIs []struct {
+		URI string `json:"uri"`
+	} `json:"uris"`
 }
 
 func (s aria2StatusResult) engineStatus() EngineStatus {
 	return EngineStatus{GID: s.GID, Status: mapAria2State(s.Status), TotalBytes: parseCounter(s.TotalLength), CompletedBytes: parseCounter(s.CompletedLength), DownloadSpeed: parseCounter(s.DownloadSpeed)}
+}
+
+func (s aria2StatusResult) download() EngineDownload {
+	if len(s.Files) == 0 || len(s.Files[0].URIs) == 0 {
+		return EngineDownload{GID: s.GID, Status: s.engineStatus()}
+	}
+	return EngineDownload{GID: s.GID, URL: s.Files[0].URIs[0].URI, Destination: filepath.Dir(s.Files[0].Path), Status: s.engineStatus()}
 }
 func parseCounter(value string) int64 { number, _ := strconv.ParseInt(value, 10, 64); return number }
 func mapAria2State(value string) DownloadState {
@@ -113,11 +128,32 @@ type Aria2Engine struct {
 	mu              sync.Mutex
 	gids            map[string]string
 	lock            *os.File
+	exit            chan error
+	processDone     chan struct{}
+	processErr      error
 }
 
 func NewAria2Engine(endpoint, secret string) *Aria2Engine {
 	return &Aria2Engine{client: &aria2RPCClient{url: endpoint, secret: secret, httpClient: &http.Client{Timeout: 5 * time.Second}}, shutdownTimeout: 5 * time.Second, gids: make(map[string]string)}
 }
+
+func (e *Aria2Engine) watchProcess() {
+	if e.cmd == nil || e.exit != nil {
+		return
+	}
+	e.exit = make(chan error, 1)
+	e.processDone = make(chan struct{})
+	go func() {
+		err := e.cmd.Wait()
+		e.mu.Lock()
+		e.processErr = err
+		e.mu.Unlock()
+		close(e.processDone)
+		e.exit <- err
+	}()
+}
+
+func (e *Aria2Engine) Exited() <-chan error { return e.exit }
 
 func (e *Aria2Engine) Add(rawURL, destination string) error {
 	result, err := e.client.call(context.Background(), "aria2.addUri", []any{rawURL}, map[string]string{"dir": destination, "check-certificate": "true", "pause": "true", "split": "4", "max-connection-per-server": "4"})
@@ -152,6 +188,31 @@ func (e *Aria2Engine) Status(gid string) (EngineStatus, error) {
 	return status.engineStatus(), nil
 }
 
+func (e *Aria2Engine) Recover() ([]EngineDownload, error) {
+	var recovered []EngineDownload
+	for _, request := range []struct {
+		method string
+		args   []any
+	}{
+		{method: "aria2.tellActive"},
+		{method: "aria2.tellWaiting", args: []any{0, 1000}},
+		{method: "aria2.tellStopped", args: []any{0, 1000}},
+	} {
+		result, err := e.client.call(context.Background(), request.method, request.args...)
+		if err != nil {
+			return nil, err
+		}
+		var statuses []aria2StatusResult
+		if err := json.Unmarshal(result, &statuses); err != nil {
+			return nil, fmt.Errorf("decode aria2 recovery response: %w", err)
+		}
+		for _, status := range statuses {
+			recovered = append(recovered, status.download())
+		}
+	}
+	return recovered, nil
+}
+
 func (e *Aria2Engine) Pause(gid string) error {
 	_, err := e.client.call(context.Background(), "aria2.pause", gid)
 	return err
@@ -170,23 +231,30 @@ func (e *Aria2Engine) Cancel(gid string) error {
 func (e *Aria2Engine) Shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), e.shutdownTimeout)
 	defer cancel()
-	_, _ = e.client.call(ctx, "aria2.saveSession")
-	_, _ = e.client.call(ctx, "aria2.shutdown")
+	_, saveErr := e.client.call(ctx, "aria2.saveSession")
+	_, shutdownErr := e.client.call(ctx, "aria2.shutdown")
 	if e.cmd == nil {
 		e.releaseLock()
-		return nil
+		return errors.Join(saveErr, shutdownErr)
 	}
-	done := make(chan error, 1)
-	go func() { done <- e.cmd.Wait() }()
+	if e.exit == nil {
+		e.watchProcess()
+	}
 	select {
-	case err := <-done:
+	case err := <-e.exit:
 		e.releaseLock()
-		return err
+		return errors.Join(saveErr, shutdownErr, err)
+	case <-e.processDone:
+		e.mu.Lock()
+		err := e.processErr
+		e.mu.Unlock()
+		e.releaseLock()
+		return errors.Join(saveErr, shutdownErr, err)
 	case <-ctx.Done():
 		_ = e.cmd.Process.Kill()
-		<-done
+		<-e.processDone
 		e.releaseLock()
-		return nil
+		return errors.Join(saveErr, shutdownErr)
 	}
 }
 
@@ -274,10 +342,17 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 	engine.cmd = cmd
 	engine.shutdownTimeout = config.ShutdownTimeout
 	engine.lock = lock
+	engine.watchProcess()
 	lockClosed = true
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
+		select {
+		case err := <-engine.exit:
+			engine.releaseLock()
+			return nil, fmt.Errorf("aria2 exited before RPC readiness: %w", err)
+		default:
+		}
 		if _, err := engine.client.call(context.Background(), "aria2.getVersion"); err == nil {
 			return engine, nil
 		} else {
@@ -286,8 +361,7 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	_ = cmd.Process.Kill()
-	_ = cmd.Wait()
-	_ = lock.Close()
-	_ = os.Remove(lock.Name())
+	<-engine.exit
+	engine.releaseLock()
 	return nil, fmt.Errorf("aria2 RPC did not become ready: %w", lastErr)
 }

@@ -78,3 +78,35 @@ func TestNewManagedAria2WaitsForReadinessAndShutsDown(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNewManagedAria2ReportsReadinessProcessExit(t *testing.T) {
+	root := t.TempDir()
+	_, err := NewManagedAria2(ManagedAria2Config{
+		BinaryPath:        "/bin/false",
+		DataDirectory:     filepath.Join(root, "runtime"),
+		DownloadDirectory: filepath.Join(root, "downloads"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "exited before RPC readiness") {
+		t.Fatalf("NewManagedAria2() error = %v", err)
+	}
+}
+
+func TestNewManagedAria2PreventsConcurrentProfileInstances(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/aria2c"); err != nil {
+		t.Skip("aria2c is not installed")
+	}
+	root := t.TempDir()
+	config := ManagedAria2Config{
+		BinaryPath:        "/usr/bin/aria2c",
+		DataDirectory:     filepath.Join(root, "runtime"),
+		DownloadDirectory: filepath.Join(root, "downloads"),
+	}
+	first, err := NewManagedAria2(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Shutdown()
+	if _, err := NewManagedAria2(config); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("second managed instance error = %v", err)
+	}
+}
