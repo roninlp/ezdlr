@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -90,6 +92,12 @@ func resolveAria2Binary(executable string) (string, error) {
 		if info, err := os.Stat(bundled); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
 			return bundled, nil
 		}
+	}
+	if strings.Contains(filepath.Base(executable), "-dev-") {
+		if system, err := exec.LookPath("aria2c"); err == nil {
+			return system, nil
+		}
+		return "", fmt.Errorf("aria2c is required on PATH for Wails development")
 	}
 	return "", fmt.Errorf("bundled aria2c not found for %s", executable)
 }
