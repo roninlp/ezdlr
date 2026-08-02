@@ -1,9 +1,22 @@
 package main
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
+
+type batchFailingEngine struct {
+	*FakeEngine
+	failURL string
+}
+
+func (e *batchFailingEngine) Add(url, destination string) error {
+	if url == e.failURL {
+		return errors.New("engine rejected URL")
+	}
+	return e.FakeEngine.Add(url, destination)
+}
 
 type queueFakeEngine struct {
 	items map[string]EngineStatus
@@ -89,6 +102,69 @@ func TestAddURLRejectsDuplicatesWithoutCallingEngine(t *testing.T) {
 	}
 	if len(engine.adds) != 1 {
 		t.Fatalf("engine add count = %d, want 1", len(engine.adds))
+	}
+}
+
+func TestReviewClipboardExtractsAndClassifiesURLsWithoutEnqueueing(t *testing.T) {
+	engine := NewFakeEngine()
+	service := NewDownloadService(engine)
+	if _, err := service.AddURL("https://example.com/existing"); err != nil {
+		t.Fatal(err)
+	}
+
+	review := service.ReviewClipboard("notes https://example.com/one\nhttps://example.com/one ftp://example.com/file https://user:pass@example.com/private https:///broken https://example.com/existing")
+	if review.AcceptedCount() != 1 || review.Accepted[0].URL != "https://example.com/one" {
+		t.Fatalf("accepted = %#v", review.Accepted)
+	}
+	if review.DuplicateCount() != 2 {
+		t.Fatalf("duplicate count = %d, want 2", review.DuplicateCount())
+	}
+	if review.RejectedCount() != 3 {
+		t.Fatalf("rejected count = %d, want 3", review.RejectedCount())
+	}
+	if len(engine.adds) != 1 {
+		t.Fatalf("review enqueued %d URLs", len(engine.adds))
+	}
+}
+
+func TestConfirmClipboardUsesConfiguredDestinationAndReturnsItemLinks(t *testing.T) {
+	engine := NewFakeEngine()
+	service := NewDownloadService(engine)
+	review := service.ReviewClipboard("https://example.com/one https://example.com/two")
+
+	result := service.ConfirmClipboard(review)
+	if result.AcceptedCount() != 2 {
+		t.Fatalf("accepted count = %d", result.AcceptedCount())
+	}
+	if len(result.Results) != 2 || result.Results[0].Item == nil || result.Results[0].Item.ID == "" {
+		t.Fatalf("result item links = %#v", result.Results)
+	}
+	if len(engine.adds) != 2 || engine.adds[0] != "https://example.com/one|Downloads" || engine.adds[1] != "https://example.com/two|Downloads" {
+		t.Fatalf("engine adds = %#v", engine.adds)
+	}
+}
+
+func TestConfirmClipboardContinuesAfterPartialEnqueueFailure(t *testing.T) {
+	engine := &batchFailingEngine{FakeEngine: NewFakeEngine(), failURL: "https://example.com/fail"}
+	service := NewDownloadService(engine)
+	review := service.ReviewClipboard("https://example.com/ok https://example.com/fail https://example.com/later")
+
+	result := service.ConfirmClipboard(review)
+	if result.AcceptedCount() != 2 || result.EnqueueFailureCount() != 1 {
+		t.Fatalf("batch result = %#v", result.Results)
+	}
+	if len(service.Snapshot().Items) != 2 {
+		t.Fatalf("queue items = %#v", service.Snapshot().Items)
+	}
+}
+
+func TestClipboardReviewCancellationDoesNotEnqueue(t *testing.T) {
+	engine := NewFakeEngine()
+	service := NewDownloadService(engine)
+	service.ReviewClipboard("https://example.com/file")
+	service.CancelClipboardReview()
+	if len(engine.adds) != 0 || len(service.Snapshot().Items) != 0 {
+		t.Fatal("cancelling review changed the queue")
 	}
 }
 

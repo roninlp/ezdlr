@@ -10,8 +10,16 @@ export function Cancel(arg1) {
   return window['go']['main']['App']['Cancel'](arg1);
 }
 
+export function CancelClipboardReview() {
+  return window['go']['main']['App']['CancelClipboardReview']();
+}
+
 export function Configuration() {
   return window['go']['main']['App']['Configuration']();
+}
+
+export function ConfirmClipboard(arg1) {
+  return window['go']['main']['App']['ConfirmClipboard'](arg1);
 }
 
 export function MoveDown(arg1) {
@@ -32,6 +40,10 @@ export function Resume(arg1) {
 
 export function Retry(arg1) {
   return window['go']['main']['App']['Retry'](arg1);
+}
+
+export function ReviewClipboard(arg1) {
+  return window['go']['main']['App']['ReviewClipboard'](arg1);
 }
 
 export function Snapshot() {

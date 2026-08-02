@@ -20,6 +20,18 @@ func (a *App) AddURL(url string) (DownloadItem, error) {
 	return a.service.AddURL(url)
 }
 
+func (a *App) ReviewClipboard(text string) ClipboardReview {
+	return a.service.ReviewClipboard(text)
+}
+
+func (a *App) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
+	return a.service.ConfirmClipboard(review)
+}
+
+func (a *App) CancelClipboardReview() {
+	a.service.CancelClipboardReview()
+}
+
 func (a *App) Snapshot() ServiceSnapshot {
 	return a.service.Snapshot()
 }
