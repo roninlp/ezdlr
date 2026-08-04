@@ -45,7 +45,8 @@ func (r serviceClipboardReader) CancelClipboardReview() { r.service.CancelClipbo
 // CannedClipboardReader is the runtime substitute used by clipboard tests.
 type CannedClipboardReader struct {
 	serviceClipboardReader
-	text string
+	text      string
+	cancelled bool
 }
 
 func NewCannedClipboardReader(service *DownloadService, text string) *CannedClipboardReader {
@@ -55,3 +56,8 @@ func NewCannedClipboardReader(service *DownloadService, text string) *CannedClip
 func (r *CannedClipboardReader) Startup(context.Context) {}
 
 func (r *CannedClipboardReader) ReadClipboard() (string, error) { return r.text, nil }
+
+func (r *CannedClipboardReader) CancelClipboardReview() {
+	r.cancelled = true
+	r.serviceClipboardReader.CancelClipboardReview()
+}

@@ -28,9 +28,16 @@ func TestAppCancelClipboardReviewRemainsExplicit(t *testing.T) {
 	reader := NewCannedClipboardReader(service, "https://example.com/file")
 	app := NewAppWithClipboardReader(service, reader)
 
-	app.ReviewClipboard("https://example.com/file")
+	text, err := app.ReadClipboard()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.ReviewClipboard(text)
 	app.CancelClipboardReview()
 
+	if !reader.cancelled {
+		t.Fatal("cancellation was not forwarded to clipboard reader")
+	}
 	if len(service.Snapshot().Items) != 0 {
 		t.Fatal("cancelling review changed the queue")
 	}
