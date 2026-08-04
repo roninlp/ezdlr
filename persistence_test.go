@@ -110,6 +110,9 @@ func TestRestoreReconcilesEngineStateWithoutDuplicatingTransfers(t *testing.T) {
 	if err := service.Restore(); err != nil {
 		t.Fatal(err)
 	}
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	items := service.Snapshot().Items
 	if len(items) != 5 {
 		t.Fatalf("item count = %d", len(items))
@@ -152,12 +155,10 @@ func TestServiceMarksActiveItemsFailedAfterUnexpectedEngineExit(t *testing.T) {
 	service.Start()
 	defer service.Shutdown()
 	engine.exit <- errors.New("engine crashed")
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if got := service.Snapshot().Items[0].State; got == StateFailed {
-			return
-		}
-		time.Sleep(time.Millisecond)
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("item %s did not become failed after engine exit", item.ID)
+	if got := service.Snapshot().Items[0].State; got != StateFailed {
+		t.Fatalf("item %s did not become failed after engine exit", item.ID)
+	}
 }

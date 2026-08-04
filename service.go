@@ -72,17 +72,15 @@ type EngineDownload struct {
 }
 
 type DownloadService struct {
-	mu         sync.RWMutex
-	engine     DownloadEngine
-	config     Configuration
-	items      []DownloadItem
-	nextID     int
-	retryAt    map[string]time.Time
-	store      StateStore
-	saveMu     sync.Mutex
-	stop       chan struct{}
-	done       chan struct{}
-	engineDone chan struct{}
+	mu      sync.RWMutex
+	engine  DownloadEngine
+	config  Configuration
+	items   []DownloadItem
+	nextID  int
+	retryAt map[string]time.Time
+	store   StateStore
+	saveMu  sync.Mutex
+	loop    EngineLoop
 }
 
 func NewDownloadService(engine DownloadEngine) *DownloadService {
@@ -94,7 +92,7 @@ func NewDownloadServiceWithStore(engine DownloadEngine, store StateStore) *Downl
 }
 
 func newDownloadService(engine DownloadEngine, store StateStore) *DownloadService {
-	return &DownloadService{
+	service := &DownloadService{
 		engine: engine,
 		config: Configuration{
 			DownloadDirectory: "Downloads",
@@ -105,50 +103,14 @@ func newDownloadService(engine DownloadEngine, store StateStore) *DownloadServic
 		retryAt: make(map[string]time.Time),
 		store:   store,
 	}
+	service.loop = newDownloadEngineLoop(service)
+	return service
 }
 
 func (s *DownloadService) Start() {
-	if s.store == nil || s.stop != nil {
-		return
+	if s.loop != nil {
+		s.loop.Start()
 	}
-	s.stop = make(chan struct{})
-	s.done = make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		defer close(s.done)
-		for {
-			select {
-			case <-ticker.C:
-				_ = s.saveState()
-			case <-s.stop:
-				return
-			}
-		}
-	}()
-	if s.engine.Exited() != nil {
-		s.engineDone = make(chan struct{})
-		go func() {
-			defer close(s.engineDone)
-			select {
-			case <-s.engine.Exited():
-				s.handleEngineExit()
-			case <-s.stop:
-			}
-		}()
-	}
-}
-
-func (s *DownloadService) handleEngineExit() {
-	s.mu.Lock()
-	for index := range s.items {
-		if s.items[index].State == StateActive {
-			s.items[index].State = StateFailed
-			s.items[index].DownloadSpeed = 0
-		}
-	}
-	s.mu.Unlock()
-	_ = s.saveState()
 }
 
 func (s *DownloadService) Restore() error {
@@ -185,12 +147,11 @@ func (s *DownloadService) Restore() error {
 		}
 	}
 	s.mu.Unlock()
-	if err := s.reconcile(s.engine); err != nil {
+	recovered, err := s.engine.Recover()
+	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	s.scheduleLocked()
-	s.mu.Unlock()
+	s.loop.SetRecovery(recovered)
 	return nil
 }
 
@@ -205,11 +166,7 @@ func nextIDAfterItems(items []DownloadItem) int {
 	return next
 }
 
-func (s *DownloadService) reconcile(engine DownloadEngine) error {
-	engineItems, err := engine.Recover()
-	if err != nil {
-		return fmt.Errorf("recover engine state: %w", err)
-	}
+func (s *DownloadService) reconcile(engineItems []EngineDownload) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	byURL := make(map[string]EngineDownload, len(engineItems))
@@ -241,8 +198,9 @@ func (s *DownloadService) reconcile(engine DownloadEngine) error {
 		}
 		item.GID = s.engine.GID(item.URL)
 	}
-	return nil
 }
+
+func (s *DownloadService) signalDirty() { s.loop.SignalDirty() }
 
 func (s *DownloadService) saveState() error {
 	if s.store == nil {
@@ -287,38 +245,14 @@ func (s *DownloadService) AddURL(rawURL string) (DownloadItem, error) {
 	item.GID = s.engine.GID(item.URL)
 	s.nextID++
 	s.items = append(s.items, item)
-	s.scheduleLocked()
-	go s.saveState()
+	s.signalDirty()
 	return s.items[len(s.items)-1], nil
 }
 
 func (s *DownloadService) Snapshot() ServiceSnapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for index := range s.items {
-		if s.items[index].State == StatePaused || s.items[index].State == StateFailed || s.items[index].State == StateComplete {
-			continue
-		}
-		if s.items[index].GID == "" {
-			continue
-		}
-		if status, err := s.engine.Status(s.items[index].GID); err == nil {
-			previousState := s.items[index].State
-			if !(previousState == StateQueued && status.Status == StatePaused) {
-				s.items[index].State = status.Status
-			}
-			s.items[index].TotalBytes = status.TotalBytes
-			s.items[index].CompletedBytes = status.CompletedBytes
-			s.items[index].DownloadSpeed = status.DownloadSpeed
-			if previousState != status.Status {
-				s.handleStatusLocked(index)
-			}
-		}
-	}
-	s.scheduleLocked()
-	result := ServiceSnapshot{Items: append([]DownloadItem{}, s.items...), Configuration: s.config}
-	go s.saveState()
-	return result
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return ServiceSnapshot{Items: append([]DownloadItem{}, s.items...), Configuration: s.config}
 }
 
 func (s *DownloadService) MoveUp(id string) error { return s.move(id, -1) }
@@ -335,7 +269,7 @@ func (s *DownloadService) move(id string, direction int) error {
 	for adjacent := index + direction; adjacent >= 0 && adjacent < len(s.items); adjacent += direction {
 		if s.items[adjacent].State == StateQueued {
 			s.items[index], s.items[adjacent] = s.items[adjacent], s.items[index]
-			go s.saveState()
+			s.signalDirty()
 			return nil
 		}
 	}
@@ -383,8 +317,7 @@ func (s *DownloadService) controlLocked(index int, from, state DownloadState, ac
 	if state == StatePaused {
 		delete(s.retryAt, s.items[index].ID)
 	}
-	s.scheduleLocked()
-	go s.saveState()
+	s.signalDirty()
 	return nil
 }
 
@@ -402,8 +335,7 @@ func (s *DownloadService) Cancel(id string) error {
 	}
 	delete(s.retryAt, id)
 	s.items = append(s.items[:index], s.items[index+1:]...)
-	s.scheduleLocked()
-	go s.saveState()
+	s.signalDirty()
 	return nil
 }
 
@@ -419,8 +351,7 @@ func (s *DownloadService) Retry(id string) error {
 	if err := s.retryLocked(index); err != nil {
 		return err
 	}
-	s.scheduleLocked()
-	go s.saveState()
+	s.signalDirty()
 	return nil
 }
 
@@ -494,9 +425,10 @@ func retryDelay(attempt int) time.Duration {
 	return time.Duration(1<<uint(attempt-1)) * 100 * time.Millisecond
 }
 
-func (s *DownloadService) scheduleLocked() {
+func (s *DownloadService) scheduleLocked() bool {
 	active := s.activeCountLocked()
 	now := time.Now()
+	changed := false
 	for index := range s.items {
 		item := &s.items[index]
 		if item.State == StateFailed {
@@ -504,6 +436,7 @@ func (s *DownloadService) scheduleLocked() {
 				if s.retryLocked(index) == nil {
 					active++
 					delete(s.retryAt, item.ID)
+					changed = true
 				}
 			}
 			continue
@@ -513,8 +446,10 @@ func (s *DownloadService) scheduleLocked() {
 		}
 		if s.resumeLocked(index) == nil {
 			active++
+			changed = true
 		}
 	}
+	return changed
 }
 
 func (s *DownloadService) activeCountLocked() int {
@@ -528,18 +463,8 @@ func (s *DownloadService) activeCountLocked() int {
 }
 
 func (s *DownloadService) Shutdown() error {
-	if s.stop != nil {
-		close(s.stop)
-		<-s.done
-		if s.engineDone != nil {
-			<-s.engineDone
-			s.engineDone = nil
-		}
-		s.stop = nil
-	}
+	s.loop.Stop()
 	saveErr := s.saveState()
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return errors.Join(saveErr, s.engine.Shutdown())
 }
 

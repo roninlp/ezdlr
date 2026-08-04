@@ -189,6 +189,9 @@ func TestQueueSchedulesThreeAndProgressesFIFO(t *testing.T) {
 	third, _ := service.AddURL("https://example.com/3")
 	fourth, _ := service.AddURL("https://example.com/4")
 
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	snapshot := service.Snapshot()
 	for _, item := range snapshot.Items[:3] {
 		if item.State != StateActive {
@@ -199,6 +202,9 @@ func TestQueueSchedulesThreeAndProgressesFIFO(t *testing.T) {
 		t.Fatalf("fourth state = %q, want queued", snapshot.Items[3].State)
 	}
 	engine.items[first.GID] = EngineStatus{GID: first.GID, Status: StateComplete, TotalBytes: 10, CompletedBytes: 10}
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	snapshot = service.Snapshot()
 	if snapshot.Items[3].ID != fourth.ID || snapshot.Items[3].State != StateActive {
 		t.Fatalf("queue did not progress: %#v", snapshot.Items)
@@ -212,6 +218,9 @@ func TestQueueLifecycleControlsPreserveItemSemantics(t *testing.T) {
 	engine := newQueueFakeEngine()
 	service := NewDownloadService(engine)
 	item, _ := service.AddURL("https://example.com/file")
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Pause(item.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +246,9 @@ func TestQueuedItemsMoveWithoutReorderingActiveItems(t *testing.T) {
 	third, _ := service.AddURL("https://example.com/3")
 	fourth, _ := service.AddURL("https://example.com/4")
 	fifth, _ := service.AddURL("https://example.com/5")
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.MoveDown(fourth.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -256,12 +268,19 @@ func TestQueueRetriesTransientFailuresAndStopsAtLimit(t *testing.T) {
 	engine := newQueueFakeEngine()
 	service := NewDownloadService(engine)
 	_, _ = service.AddURL("https://example.com/file")
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	for attempt := 1; attempt <= 3; attempt++ {
 		current := service.Snapshot().Items[0]
 		engine.items[current.GID] = EngineStatus{GID: current.GID, Status: StateFailed}
-		service.Snapshot()
+		if err := service.loop.Tick(); err != nil {
+			t.Fatal(err)
+		}
 		time.Sleep(retryDelay(attempt) + 10*time.Millisecond)
-		service.Snapshot()
+		if err := service.loop.Tick(); err != nil {
+			t.Fatal(err)
+		}
 		if attempt < 3 && service.Snapshot().Items[0].State != StateActive {
 			t.Fatalf("attempt %d did not retry", attempt)
 		}
@@ -279,12 +298,21 @@ func TestFailedDownloadDoesNotBlockLaterWorkAndCanBeRetried(t *testing.T) {
 	service := NewDownloadService(engine)
 	failed, _ := service.AddURL("https://example.com/failed")
 	later, _ := service.AddURL("https://example.com/later")
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	engine.items[failed.GID] = EngineStatus{GID: failed.GID, Status: StateFailed}
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	snapshot := service.Snapshot()
 	if snapshot.Items[1].ID != later.ID || snapshot.Items[1].State != StateActive {
 		t.Fatalf("later item did not progress: %#v", snapshot.Items)
 	}
 	if err := service.Retry(failed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.loop.Tick(); err != nil {
 		t.Fatal(err)
 	}
 	if got := service.Snapshot().Items[0].State; got != StateActive {

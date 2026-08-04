@@ -142,8 +142,7 @@ func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatc
 		itemCopy := item
 		result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "accepted", Item: &itemCopy})
 	}
-	s.scheduleLocked()
-	go s.saveState()
+	s.signalDirty()
 	return result
 }
 
