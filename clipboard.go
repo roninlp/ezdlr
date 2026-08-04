@@ -136,9 +136,7 @@ func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatc
 			result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "enqueue-failure", Reason: err.Error()})
 			continue
 		}
-		if provider, ok := s.engine.(DownloadGIDProvider); ok {
-			item.GID = provider.GID(item.URL)
-		}
+		item.GID = s.engine.GID(item.URL)
 		s.nextID++
 		s.items = append(s.items, item)
 		itemCopy := item

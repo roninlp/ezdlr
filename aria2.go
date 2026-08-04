@@ -133,6 +133,8 @@ type Aria2Engine struct {
 	processErr      error
 }
 
+var _ DownloadEngine = (*Aria2Engine)(nil)
+
 func NewAria2Engine(endpoint, secret string) *Aria2Engine {
 	return &Aria2Engine{client: &aria2RPCClient{url: endpoint, secret: secret, httpClient: &http.Client{Timeout: 5 * time.Second}}, shutdownTimeout: 5 * time.Second, gids: make(map[string]string)}
 }

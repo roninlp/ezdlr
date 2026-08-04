@@ -48,7 +48,9 @@ func (e *queueFakeEngine) Resume(gid string) error {
 	e.items[gid] = EngineStatus{GID: gid, Status: StateActive}
 	return nil
 }
-func (e *queueFakeEngine) Cancel(gid string) error { delete(e.items, gid); return nil }
+func (e *queueFakeEngine) Cancel(gid string) error            { delete(e.items, gid); return nil }
+func (e *queueFakeEngine) Recover() ([]EngineDownload, error) { return []EngineDownload{}, nil }
+func (e *queueFakeEngine) Exited() <-chan error               { return nil }
 
 func TestAddURLCreatesQueuedItemAndUsesConfiguredDestination(t *testing.T) {
 	engine := NewFakeEngine()

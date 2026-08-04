@@ -46,6 +46,13 @@ type ServiceSnapshot struct {
 
 type DownloadEngine interface {
 	Add(url string, destination string) error
+	Status(gid string) (EngineStatus, error)
+	Pause(gid string) error
+	Resume(gid string) error
+	Cancel(gid string) error
+	Recover() ([]EngineDownload, error)
+	Exited() <-chan error
+	GID(url string) string
 	Shutdown() error
 }
 
@@ -57,33 +64,11 @@ type EngineStatus struct {
 	DownloadSpeed  int64
 }
 
-type DownloadStatusProvider interface {
-	Status(gid string) (EngineStatus, error)
-}
-
 type EngineDownload struct {
 	GID         string
 	URL         string
 	Destination string
 	Status      EngineStatus
-}
-
-type DownloadRecoveryEngine interface {
-	Recover() ([]EngineDownload, error)
-}
-
-type DownloadEngineExitProvider interface {
-	Exited() <-chan error
-}
-
-type DownloadLifecycleEngine interface {
-	Pause(gid string) error
-	Resume(gid string) error
-	Cancel(gid string) error
-}
-
-type DownloadGIDProvider interface {
-	GID(url string) string
 }
 
 type DownloadService struct {
@@ -141,12 +126,12 @@ func (s *DownloadService) Start() {
 			}
 		}
 	}()
-	if observer, ok := s.engine.(DownloadEngineExitProvider); ok && observer.Exited() != nil {
+	if s.engine.Exited() != nil {
 		s.engineDone = make(chan struct{})
 		go func() {
 			defer close(s.engineDone)
 			select {
-			case <-observer.Exited():
+			case <-s.engine.Exited():
 				s.handleEngineExit()
 			case <-s.stop:
 			}
@@ -200,10 +185,8 @@ func (s *DownloadService) Restore() error {
 		}
 	}
 	s.mu.Unlock()
-	if recovery, ok := s.engine.(DownloadRecoveryEngine); ok {
-		if err := s.reconcile(recovery); err != nil {
-			return err
-		}
+	if err := s.reconcile(s.engine); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	s.scheduleLocked()
@@ -222,8 +205,8 @@ func nextIDAfterItems(items []DownloadItem) int {
 	return next
 }
 
-func (s *DownloadService) reconcile(recovery DownloadRecoveryEngine) error {
-	engineItems, err := recovery.Recover()
+func (s *DownloadService) reconcile(engine DownloadEngine) error {
+	engineItems, err := engine.Recover()
 	if err != nil {
 		return fmt.Errorf("recover engine state: %w", err)
 	}
@@ -256,9 +239,7 @@ func (s *DownloadService) reconcile(recovery DownloadRecoveryEngine) error {
 			item.State = StateFailed
 			continue
 		}
-		if provider, ok := s.engine.(DownloadGIDProvider); ok {
-			item.GID = provider.GID(item.URL)
-		}
+		item.GID = s.engine.GID(item.URL)
 	}
 	return nil
 }
@@ -303,9 +284,7 @@ func (s *DownloadService) AddURL(rawURL string) (DownloadItem, error) {
 	if err := s.engine.Add(item.URL, item.Destination); err != nil {
 		return DownloadItem{}, err
 	}
-	if provider, ok := s.engine.(DownloadGIDProvider); ok {
-		item.GID = provider.GID(item.URL)
-	}
+	item.GID = s.engine.GID(item.URL)
 	s.nextID++
 	s.items = append(s.items, item)
 	s.scheduleLocked()
@@ -316,25 +295,23 @@ func (s *DownloadService) AddURL(rawURL string) (DownloadItem, error) {
 func (s *DownloadService) Snapshot() ServiceSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if provider, ok := s.engine.(DownloadStatusProvider); ok {
-		for index := range s.items {
-			if s.items[index].State == StatePaused || s.items[index].State == StateFailed || s.items[index].State == StateComplete {
-				continue
+	for index := range s.items {
+		if s.items[index].State == StatePaused || s.items[index].State == StateFailed || s.items[index].State == StateComplete {
+			continue
+		}
+		if s.items[index].GID == "" {
+			continue
+		}
+		if status, err := s.engine.Status(s.items[index].GID); err == nil {
+			previousState := s.items[index].State
+			if !(previousState == StateQueued && status.Status == StatePaused) {
+				s.items[index].State = status.Status
 			}
-			if s.items[index].GID == "" {
-				continue
-			}
-			if status, err := provider.Status(s.items[index].GID); err == nil {
-				previousState := s.items[index].State
-				if !(previousState == StateQueued && status.Status == StatePaused) {
-					s.items[index].State = status.Status
-				}
-				s.items[index].TotalBytes = status.TotalBytes
-				s.items[index].CompletedBytes = status.CompletedBytes
-				s.items[index].DownloadSpeed = status.DownloadSpeed
-				if previousState != status.Status {
-					s.handleStatusLocked(index)
-				}
+			s.items[index].TotalBytes = status.TotalBytes
+			s.items[index].CompletedBytes = status.CompletedBytes
+			s.items[index].DownloadSpeed = status.DownloadSpeed
+			if previousState != status.Status {
+				s.handleStatusLocked(index)
 			}
 		}
 	}
@@ -366,7 +343,7 @@ func (s *DownloadService) move(id string, direction int) error {
 }
 
 func (s *DownloadService) Pause(id string) error {
-	return s.control(id, StateActive, StatePaused, func(engine DownloadLifecycleEngine, gid string) error { return engine.Pause(gid) })
+	return s.control(id, StateActive, StatePaused, func(engine DownloadEngine, gid string) error { return engine.Pause(gid) })
 }
 
 func (s *DownloadService) Resume(id string) error {
@@ -379,10 +356,10 @@ func (s *DownloadService) Resume(id string) error {
 	if s.items[index].State == StatePaused && s.activeCountLocked() >= s.config.ActiveLimit {
 		return errors.New("active download limit reached")
 	}
-	return s.controlLocked(index, StatePaused, StateActive, func(engine DownloadLifecycleEngine, gid string) error { return engine.Resume(gid) })
+	return s.controlLocked(index, StatePaused, StateActive, func(engine DownloadEngine, gid string) error { return engine.Resume(gid) })
 }
 
-func (s *DownloadService) control(id string, from, state DownloadState, action func(DownloadLifecycleEngine, string) error) error {
+func (s *DownloadService) control(id string, from, state DownloadState, action func(DownloadEngine, string) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	index := s.itemIndex(id)
@@ -392,15 +369,14 @@ func (s *DownloadService) control(id string, from, state DownloadState, action f
 	return s.controlLocked(index, from, state, action)
 }
 
-func (s *DownloadService) controlLocked(index int, from, state DownloadState, action func(DownloadLifecycleEngine, string) error) error {
+func (s *DownloadService) controlLocked(index int, from, state DownloadState, action func(DownloadEngine, string) error) error {
 	if s.items[index].State != from {
 		return fmt.Errorf("download is %s, want %s", s.items[index].State, from)
 	}
-	engine, ok := s.engine.(DownloadLifecycleEngine)
-	if !ok || s.items[index].GID == "" {
+	if s.items[index].GID == "" {
 		return errors.New("download engine does not support lifecycle controls")
 	}
-	if err := action(engine, s.items[index].GID); err != nil {
+	if err := action(s.engine, s.items[index].GID); err != nil {
 		return err
 	}
 	s.items[index].State = state
@@ -420,11 +396,7 @@ func (s *DownloadService) Cancel(id string) error {
 		return errors.New("download was not found")
 	}
 	if s.items[index].GID != "" {
-		engine, ok := s.engine.(DownloadLifecycleEngine)
-		if !ok {
-			return errors.New("download engine does not support lifecycle controls")
-		}
-		if err := engine.Cancel(s.items[index].GID); err != nil {
+		if err := s.engine.Cancel(s.items[index].GID); err != nil {
 			return err
 		}
 	}
@@ -468,11 +440,10 @@ func (s *DownloadService) itemIndex(id string) int {
 }
 
 func (s *DownloadService) resumeLocked(index int) error {
-	engine, ok := s.engine.(DownloadLifecycleEngine)
-	if !ok {
+	if s.items[index].GID == "" {
 		return errors.New("download engine does not support lifecycle controls")
 	}
-	if err := engine.Resume(s.items[index].GID); err != nil {
+	if err := s.engine.Resume(s.items[index].GID); err != nil {
 		return err
 	}
 	s.items[index].State = StateActive
@@ -481,8 +452,8 @@ func (s *DownloadService) resumeLocked(index int) error {
 
 func (s *DownloadService) retryLocked(index int) error {
 	item := &s.items[index]
-	if engine, ok := s.engine.(DownloadLifecycleEngine); ok && item.GID != "" {
-		if err := engine.Cancel(item.GID); err != nil {
+	if item.GID != "" {
+		if err := s.engine.Cancel(item.GID); err != nil {
 			s.retryFailureLocked(index)
 			return err
 		}
@@ -491,9 +462,7 @@ func (s *DownloadService) retryLocked(index int) error {
 		s.retryFailureLocked(index)
 		return err
 	}
-	if provider, ok := s.engine.(DownloadGIDProvider); ok {
-		item.GID = provider.GID(item.URL)
-	}
+	item.GID = s.engine.GID(item.URL)
 	if err := s.resumeLocked(index); err != nil {
 		s.retryFailureLocked(index)
 		return err
@@ -617,3 +586,11 @@ func (e *FakeEngine) Shutdown() error {
 	e.shutdown = true
 	return nil
 }
+
+func (e *FakeEngine) Status(string) (EngineStatus, error) { return EngineStatus{}, nil }
+func (e *FakeEngine) Pause(string) error                  { return nil }
+func (e *FakeEngine) Resume(string) error                 { return nil }
+func (e *FakeEngine) Cancel(string) error                 { return nil }
+func (e *FakeEngine) Recover() ([]EngineDownload, error)  { return []EngineDownload{}, nil }
+func (e *FakeEngine) Exited() <-chan error                { return nil }
+func (e *FakeEngine) GID(string) string                   { return "" }

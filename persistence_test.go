@@ -9,12 +9,12 @@ import (
 )
 
 type exitFakeEngine struct {
-	*queueFakeEngine
+	*FakeEngine
 	exit chan error
 }
 
 func newExitFakeEngine() *exitFakeEngine {
-	return &exitFakeEngine{queueFakeEngine: newQueueFakeEngine(), exit: make(chan error, 1)}
+	return &exitFakeEngine{FakeEngine: NewFakeEngine(), exit: make(chan error, 1)}
 }
 
 func (e *exitFakeEngine) Exited() <-chan error { return e.exit }
@@ -48,21 +48,40 @@ func TestJSONStateStoreRoundTripProtectsStateFile(t *testing.T) {
 }
 
 type recoveryFakeEngine struct {
-	queueFakeEngine
+	items     map[string]EngineStatus
+	gids      map[string]string
+	next      int
 	recovered []EngineDownload
 	addCount  int
 }
 
 func newRecoveryFakeEngine(recovered []EngineDownload) *recoveryFakeEngine {
-	return &recoveryFakeEngine{queueFakeEngine: *newQueueFakeEngine(), recovered: recovered}
+	return &recoveryFakeEngine{items: make(map[string]EngineStatus), gids: make(map[string]string), recovered: recovered}
 }
 
 func (e *recoveryFakeEngine) Add(url, destination string) error {
 	e.addCount++
-	return e.queueFakeEngine.Add(url, destination)
+	e.next++
+	gid := formatID(e.next)
+	e.items[gid] = EngineStatus{GID: gid, Status: StatePaused}
+	e.gids[url] = gid
+	return nil
 }
 
-func (e *recoveryFakeEngine) Recover() ([]EngineDownload, error) { return e.recovered, nil }
+func (e *recoveryFakeEngine) Recover() ([]EngineDownload, error)      { return e.recovered, nil }
+func (e *recoveryFakeEngine) Shutdown() error                         { return nil }
+func (e *recoveryFakeEngine) Status(gid string) (EngineStatus, error) { return e.items[gid], nil }
+func (e *recoveryFakeEngine) Pause(gid string) error {
+	e.items[gid] = EngineStatus{GID: gid, Status: StatePaused}
+	return nil
+}
+func (e *recoveryFakeEngine) Resume(gid string) error {
+	e.items[gid] = EngineStatus{GID: gid, Status: StateActive}
+	return nil
+}
+func (e *recoveryFakeEngine) Cancel(gid string) error { delete(e.items, gid); return nil }
+func (e *recoveryFakeEngine) Exited() <-chan error    { return nil }
+func (e *recoveryFakeEngine) GID(url string) string   { return e.gids[url] }
 
 func TestRestoreReconcilesEngineStateWithoutDuplicatingTransfers(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
