@@ -95,6 +95,39 @@ jobs:
           chmod 755 release/ezdlr-linux-amd64/ezdlr release/ezdlr-linux-amd64/aria2c
           tar -czf release/ezdlr-linux-amd64.tar.gz -C release ezdlr-linux-amd64
 
+      - name: Package Linux AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/lib/ezdlr
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps
+          cp build/bin/ezdlr AppDir/usr/bin/ezdlr
+          cp "$(command -v aria2c)" AppDir/usr/lib/ezdlr/aria2c
+          cp packaging/arch/ezdlr.desktop AppDir/usr/share/applications/ezdlr.desktop
+          cp packaging/arch/ezdlr.svg AppDir/usr/share/icons/hicolor/scalable/apps/ezdlr.svg
+          chmod 755 AppDir/usr/bin/ezdlr AppDir/usr/lib/ezdlr/aria2c
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          exec "$HERE/usr/bin/ezdlr" "$@"
+          EOF
+          chmod 755 AppDir/AppRun
+
+          curl --fail --location --retry 3 \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+            --output linuxdeploy.AppImage
+          curl --fail --location --retry 3 \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            --output appimagetool.AppImage
+          chmod 755 linuxdeploy.AppImage appimagetool.AppImage
+          ./linuxdeploy.AppImage --appimage-extract-and-run \
+            --appdir AppDir \
+            --desktop-file AppDir/usr/share/applications/ezdlr.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/ezdlr.svg
+          ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run \
+            AppDir release/ezdlr-linux-amd64.AppImage
+
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
@@ -111,6 +144,7 @@ jobs:
           path: |
             release/*.tar.gz
             release/*.zip
+            release/*.AppImage
           if-no-files-found: error
 
   publish:
@@ -131,4 +165,5 @@ jobs:
           files: |
             release/*.tar.gz
             release/*.zip
+            release/*.AppImage
           generate_release_notes: true
