@@ -3,7 +3,6 @@ package main
 import (
 	"regexp"
 	"strings"
-	"time"
 )
 
 type ClipboardURL struct {
@@ -125,24 +124,14 @@ func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatc
 			result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "duplicate", Reason: "URL is already represented in the queue"})
 			continue
 		}
-		item := DownloadItem{
-			ID:          formatID(s.nextID),
-			URL:         cleanURL,
-			State:       StateQueued,
-			Destination: s.config.DownloadDirectory,
-			AddedAt:     time.Now().UTC().Format(time.RFC3339Nano),
-		}
-		if err := s.engine.Add(item.URL, item.Destination); err != nil {
+		item, err := s.enqueueLocked(cleanURL)
+		if err != nil {
 			result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "enqueue-failure", Reason: err.Error()})
 			continue
 		}
-		item.GID = s.engine.GID(item.URL)
-		s.nextID++
-		s.items = append(s.items, item)
 		itemCopy := item
 		result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "accepted", Item: &itemCopy})
 	}
-	s.signalDirty()
 	return result
 }
 

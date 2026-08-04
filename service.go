@@ -232,6 +232,14 @@ func (s *DownloadService) AddURL(rawURL string) (DownloadItem, error) {
 		}
 	}
 
+	item, err := s.enqueueLocked(cleanURL)
+	if err != nil {
+		return DownloadItem{}, err
+	}
+	return item, nil
+}
+
+func (s *DownloadService) enqueueLocked(cleanURL string) (DownloadItem, error) {
 	item := DownloadItem{
 		ID:          formatID(s.nextID),
 		URL:         cleanURL,
@@ -246,7 +254,7 @@ func (s *DownloadService) AddURL(rawURL string) (DownloadItem, error) {
 	s.nextID++
 	s.items = append(s.items, item)
 	s.signalDirty()
-	return s.items[len(s.items)-1], nil
+	return item, nil
 }
 
 func (s *DownloadService) Snapshot() ServiceSnapshot {
