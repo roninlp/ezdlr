@@ -16,12 +16,12 @@ type ClipboardReader interface {
 }
 
 type WailsClipboardReader struct {
-	service *DownloadService
+	serviceClipboardReader
 	context context.Context
 }
 
 func NewWailsClipboardReader(service *DownloadService) *WailsClipboardReader {
-	return &WailsClipboardReader{service: service}
+	return &WailsClipboardReader{serviceClipboardReader: serviceClipboardReader{service: service}}
 }
 
 func (r *WailsClipboardReader) Startup(ctx context.Context) { r.context = ctx }
@@ -30,36 +30,28 @@ func (r *WailsClipboardReader) ReadClipboard() (string, error) {
 	return runtime.ClipboardGetText(r.context)
 }
 
-func (r *WailsClipboardReader) ReviewClipboard(text string) ClipboardReview {
+type serviceClipboardReader struct{ service *DownloadService }
+
+func (r serviceClipboardReader) ReviewClipboard(text string) ClipboardReview {
 	return r.service.ReviewClipboard(text)
 }
 
-func (r *WailsClipboardReader) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
+func (r serviceClipboardReader) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
 	return r.service.ConfirmClipboard(review)
 }
 
-func (r *WailsClipboardReader) CancelClipboardReview() { r.service.CancelClipboardReview() }
+func (r serviceClipboardReader) CancelClipboardReview() { r.service.CancelClipboardReview() }
 
 // CannedClipboardReader is the runtime substitute used by clipboard tests.
 type CannedClipboardReader struct {
-	service *DownloadService
-	text    string
+	serviceClipboardReader
+	text string
 }
 
 func NewCannedClipboardReader(service *DownloadService, text string) *CannedClipboardReader {
-	return &CannedClipboardReader{service: service, text: text}
+	return &CannedClipboardReader{serviceClipboardReader: serviceClipboardReader{service: service}, text: text}
 }
 
 func (r *CannedClipboardReader) Startup(context.Context) {}
 
 func (r *CannedClipboardReader) ReadClipboard() (string, error) { return r.text, nil }
-
-func (r *CannedClipboardReader) ReviewClipboard(text string) ClipboardReview {
-	return r.service.ReviewClipboard(text)
-}
-
-func (r *CannedClipboardReader) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
-	return r.service.ConfirmClipboard(review)
-}
-
-func (r *CannedClipboardReader) CancelClipboardReview() { r.service.CancelClipboardReview() }

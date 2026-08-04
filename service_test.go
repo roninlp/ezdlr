@@ -110,11 +110,12 @@ func TestAddURLRejectsDuplicatesWithoutCallingEngine(t *testing.T) {
 func TestReviewClipboardExtractsAndClassifiesURLsWithoutEnqueueing(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
+	app := NewAppWithClipboardReader(service, NewCannedClipboardReader(service, ""))
 	if _, err := service.AddURL("https://example.com/existing"); err != nil {
 		t.Fatal(err)
 	}
 
-	review := service.ReviewClipboard("notes https://example.com/one\nhttps://example.com/one ftp://example.com/file https://user:pass@example.com/private https:///broken https://example.com/existing")
+	review := app.ReviewClipboard("notes https://example.com/one\nhttps://example.com/one ftp://example.com/file https://user:pass@example.com/private https:///broken https://example.com/existing")
 	if review.AcceptedCount() != 1 || review.Accepted[0].URL != "https://example.com/one" {
 		t.Fatalf("accepted = %#v", review.Accepted)
 	}
@@ -132,9 +133,10 @@ func TestReviewClipboardExtractsAndClassifiesURLsWithoutEnqueueing(t *testing.T)
 func TestConfirmClipboardUsesConfiguredDestinationAndReturnsItemLinks(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	review := service.ReviewClipboard("https://example.com/one https://example.com/two")
+	app := NewAppWithClipboardReader(service, NewCannedClipboardReader(service, ""))
+	review := app.ReviewClipboard("https://example.com/one https://example.com/two")
 
-	result := service.ConfirmClipboard(review)
+	result := app.ConfirmClipboard(review)
 	if result.AcceptedCount() != 2 {
 		t.Fatalf("accepted count = %d", result.AcceptedCount())
 	}
@@ -149,9 +151,10 @@ func TestConfirmClipboardUsesConfiguredDestinationAndReturnsItemLinks(t *testing
 func TestConfirmClipboardContinuesAfterPartialEnqueueFailure(t *testing.T) {
 	engine := &batchFailingEngine{FakeEngine: NewFakeEngine(), failURL: "https://example.com/fail"}
 	service := NewDownloadService(engine)
-	review := service.ReviewClipboard("https://example.com/ok https://example.com/fail https://example.com/later")
+	app := NewAppWithClipboardReader(service, NewCannedClipboardReader(service, ""))
+	review := app.ReviewClipboard("https://example.com/ok https://example.com/fail https://example.com/later")
 
-	result := service.ConfirmClipboard(review)
+	result := app.ConfirmClipboard(review)
 	if result.AcceptedCount() != 2 || result.EnqueueFailureCount() != 1 {
 		t.Fatalf("batch result = %#v", result.Results)
 	}
@@ -163,8 +166,9 @@ func TestConfirmClipboardContinuesAfterPartialEnqueueFailure(t *testing.T) {
 func TestClipboardReviewCancellationDoesNotEnqueue(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	service.ReviewClipboard("https://example.com/file")
-	service.CancelClipboardReview()
+	app := NewAppWithClipboardReader(service, NewCannedClipboardReader(service, ""))
+	app.ReviewClipboard("https://example.com/file")
+	app.CancelClipboardReview()
 	if len(engine.adds) != 0 || len(service.Snapshot().Items) != 0 {
 		t.Fatal("cancelling review changed the queue")
 	}
