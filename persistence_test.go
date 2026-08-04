@@ -49,23 +49,21 @@ func TestJSONStateStoreRoundTripProtectsStateFile(t *testing.T) {
 
 type recoveryFakeEngine struct {
 	items     map[string]EngineStatus
-	gids      map[string]string
 	next      int
 	recovered []EngineDownload
 	addCount  int
 }
 
 func newRecoveryFakeEngine(recovered []EngineDownload) *recoveryFakeEngine {
-	return &recoveryFakeEngine{items: make(map[string]EngineStatus), gids: make(map[string]string), recovered: recovered}
+	return &recoveryFakeEngine{items: make(map[string]EngineStatus), recovered: recovered}
 }
 
-func (e *recoveryFakeEngine) Add(url, destination string) error {
+func (e *recoveryFakeEngine) Add(url, destination string) (string, error) {
 	e.addCount++
 	e.next++
 	gid := formatID(e.next)
 	e.items[gid] = EngineStatus{GID: gid, Status: StatePaused}
-	e.gids[url] = gid
-	return nil
+	return gid, nil
 }
 
 func (e *recoveryFakeEngine) Recover() ([]EngineDownload, error)      { return e.recovered, nil }
@@ -81,7 +79,6 @@ func (e *recoveryFakeEngine) Resume(gid string) error {
 }
 func (e *recoveryFakeEngine) Cancel(gid string) error { delete(e.items, gid); return nil }
 func (e *recoveryFakeEngine) Exited() <-chan error    { return nil }
-func (e *recoveryFakeEngine) GID(url string) string   { return e.gids[url] }
 
 func TestRestoreReconcilesEngineStateWithoutDuplicatingTransfers(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
@@ -149,9 +146,9 @@ func TestServiceMarksActiveItemsFailedAfterUnexpectedEngineExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.mu.Lock()
-	service.items[0].State = StateActive
-	service.mu.Unlock()
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
 	service.Start()
 	defer service.Shutdown()
 	engine.exit <- errors.New("engine crashed")

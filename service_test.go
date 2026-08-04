@@ -11,46 +11,12 @@ type batchFailingEngine struct {
 	failURL string
 }
 
-func (e *batchFailingEngine) Add(url, destination string) error {
+func (e *batchFailingEngine) Add(url, destination string) (string, error) {
 	if url == e.failURL {
-		return errors.New("engine rejected URL")
+		return "", errors.New("engine rejected URL")
 	}
 	return e.FakeEngine.Add(url, destination)
 }
-
-type queueFakeEngine struct {
-	items map[string]EngineStatus
-	gids  map[string]string
-	next  int
-}
-
-func newQueueFakeEngine() *queueFakeEngine {
-	return &queueFakeEngine{items: make(map[string]EngineStatus), gids: make(map[string]string)}
-}
-
-func (e *queueFakeEngine) Add(url, destination string) error {
-	e.next++
-	gid := formatID(e.next)
-	e.items[gid] = EngineStatus{GID: gid, Status: StatePaused}
-	e.gids[url] = gid
-	return nil
-}
-func (e *queueFakeEngine) Shutdown() error { return nil }
-func (e *queueFakeEngine) GID(url string) string {
-	return e.gids[url]
-}
-func (e *queueFakeEngine) Status(gid string) (EngineStatus, error) { return e.items[gid], nil }
-func (e *queueFakeEngine) Pause(gid string) error {
-	e.items[gid] = EngineStatus{GID: gid, Status: StatePaused}
-	return nil
-}
-func (e *queueFakeEngine) Resume(gid string) error {
-	e.items[gid] = EngineStatus{GID: gid, Status: StateActive}
-	return nil
-}
-func (e *queueFakeEngine) Cancel(gid string) error            { delete(e.items, gid); return nil }
-func (e *queueFakeEngine) Recover() ([]EngineDownload, error) { return []EngineDownload{}, nil }
-func (e *queueFakeEngine) Exited() <-chan error               { return nil }
 
 func TestAddURLCreatesQueuedItemAndUsesConfiguredDestination(t *testing.T) {
 	engine := NewFakeEngine()
@@ -203,7 +169,7 @@ func TestShutdownClosesEngine(t *testing.T) {
 }
 
 func TestQueueSchedulesThreeAndProgressesFIFO(t *testing.T) {
-	engine := newQueueFakeEngine()
+	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
 	first, _ := service.AddURL("https://example.com/1")
 	second, _ := service.AddURL("https://example.com/2")
@@ -236,7 +202,7 @@ func TestQueueSchedulesThreeAndProgressesFIFO(t *testing.T) {
 }
 
 func TestQueueLifecycleControlsPreserveItemSemantics(t *testing.T) {
-	engine := newQueueFakeEngine()
+	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
 	item, _ := service.AddURL("https://example.com/file")
 	if err := service.loop.Tick(); err != nil {
@@ -260,7 +226,7 @@ func TestQueueLifecycleControlsPreserveItemSemantics(t *testing.T) {
 }
 
 func TestQueuedItemsMoveWithoutReorderingActiveItems(t *testing.T) {
-	engine := newQueueFakeEngine()
+	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
 	first, _ := service.AddURL("https://example.com/1")
 	second, _ := service.AddURL("https://example.com/2")
@@ -286,7 +252,7 @@ func TestQueuedItemsMoveWithoutReorderingActiveItems(t *testing.T) {
 }
 
 func TestQueueRetriesTransientFailuresAndStopsAtLimit(t *testing.T) {
-	engine := newQueueFakeEngine()
+	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
 	_, _ = service.AddURL("https://example.com/file")
 	if err := service.loop.Tick(); err != nil {
@@ -315,7 +281,7 @@ func TestQueueRetriesTransientFailuresAndStopsAtLimit(t *testing.T) {
 }
 
 func TestFailedDownloadDoesNotBlockLaterWorkAndCanBeRetried(t *testing.T) {
-	engine := newQueueFakeEngine()
+	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
 	failed, _ := service.AddURL("https://example.com/failed")
 	later, _ := service.AddURL("https://example.com/later")

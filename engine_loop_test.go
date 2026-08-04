@@ -44,9 +44,6 @@ func TestSnapshotIsPure(t *testing.T) {
 	if _, err := service.AddURL("https://example.com/file"); err != nil {
 		t.Fatal(err)
 	}
-	service.mu.Lock()
-	service.items[0].GID = "gid"
-	service.mu.Unlock()
 	service.Snapshot()
 	if engine.statusCalls != 0 {
 		t.Fatalf("Snapshot() status calls = %d, want 0", engine.statusCalls)

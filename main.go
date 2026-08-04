@@ -53,7 +53,7 @@ func main() {
 	if err := service.Restore(); err != nil {
 		log.Fatal(err)
 	}
-	service.config.DownloadDirectory = downloadDirectory
+	service.setDownloadDirectory(downloadDirectory)
 	service.Start()
 	app := NewApp(service)
 

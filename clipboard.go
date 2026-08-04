@@ -94,15 +94,16 @@ func reviewClipboardText(text string, items []DownloadItem) ClipboardReview {
 }
 
 func (s *DownloadService) ReviewClipboard(text string) ClipboardReview {
-	s.mu.RLock()
-	items := append([]DownloadItem(nil), s.items...)
-	s.mu.RUnlock()
-	return reviewClipboardText(text, items)
+	return reviewClipboardText(text, s.loop.itemsSnapshot())
 }
 
 func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return s.loop.confirmClipboard(review)
+}
+
+func (l *downloadEngineLoop) confirmClipboard(review ClipboardReview) ClipboardBatchResult {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	result := ClipboardBatchResult{Results: []ClipboardResult{}}
 	for _, entry := range review.Rejected {
@@ -120,11 +121,11 @@ func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatc
 			result.Results = append(result.Results, ClipboardResult{URL: entry.URL, Status: "rejected", Reason: err.Error()})
 			continue
 		}
-		if s.hasURLLocked(cleanURL) {
+		if l.hasURLLocked(cleanURL) {
 			result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "duplicate", Reason: "URL is already represented in the queue"})
 			continue
 		}
-		item, err := s.enqueueLocked(cleanURL)
+		item, err := l.enqueueLocked(cleanURL)
 		if err != nil {
 			result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "enqueue-failure", Reason: err.Error()})
 			continue
@@ -138,12 +139,3 @@ func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatc
 // Reviews are value objects, so cancelling one only requires the caller to
 // discard it. This method keeps cancellation explicit at the app boundary.
 func (s *DownloadService) CancelClipboardReview() {}
-
-func (s *DownloadService) hasURLLocked(cleanURL string) bool {
-	for _, item := range s.items {
-		if item.URL == cleanURL {
-			return true
-		}
-	}
-	return false
-}

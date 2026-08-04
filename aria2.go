@@ -124,18 +124,16 @@ func mapAria2State(value string) DownloadState {
 type Aria2Engine struct {
 	client  *aria2RPCClient
 	process SupervisedProcess
-	mu      sync.Mutex
-	gids    map[string]string
 }
 
 var _ DownloadEngine = (*Aria2Engine)(nil)
 
 func NewAria2Engine(endpoint, secret string) *Aria2Engine {
-	return &Aria2Engine{client: newAria2RPCClient(endpoint, secret), gids: make(map[string]string)}
+	return &Aria2Engine{client: newAria2RPCClient(endpoint, secret)}
 }
 
 func newAria2Engine(process SupervisedProcess) *Aria2Engine {
-	return &Aria2Engine{client: newAria2RPCClient(process.Endpoint(), process.Secret()), process: process, gids: make(map[string]string)}
+	return &Aria2Engine{client: newAria2RPCClient(process.Endpoint(), process.Secret()), process: process}
 }
 
 func newAria2RPCClient(endpoint, secret string) *aria2RPCClient {
@@ -149,25 +147,16 @@ func (e *Aria2Engine) Exited() <-chan error {
 	return e.process.Exited()
 }
 
-func (e *Aria2Engine) Add(rawURL, destination string) error {
+func (e *Aria2Engine) Add(rawURL, destination string) (string, error) {
 	result, err := e.client.call(context.Background(), "aria2.addUri", []any{rawURL}, map[string]string{"dir": destination, "check-certificate": "true", "pause": "true", "split": "4", "max-connection-per-server": "4"})
 	if err != nil {
-		return err
+		return "", err
 	}
 	var gid string
 	if err := json.Unmarshal(result, &gid); err != nil || gid == "" {
-		return errors.New("aria2 returned an invalid download identifier")
+		return "", errors.New("aria2 returned an invalid download identifier")
 	}
-	e.mu.Lock()
-	e.gids[rawURL] = gid
-	e.mu.Unlock()
-	return nil
-}
-
-func (e *Aria2Engine) GID(rawURL string) string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.gids[rawURL]
+	return gid, nil
 }
 
 func (e *Aria2Engine) Status(gid string) (EngineStatus, error) {

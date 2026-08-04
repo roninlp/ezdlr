@@ -52,11 +52,12 @@ func TestAria2EngineSerializesRPCAndMapsStatus(t *testing.T) {
 	defer server.Close()
 
 	engine := NewAria2Engine(server.URL, "private-secret")
-	if err := engine.Add("https://example.com/file", "Downloads"); err != nil {
+	gid, err := engine.Add("https://example.com/file", "Downloads")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := engine.GID("https://example.com/file"); got != "gid-1" {
-		t.Fatalf("GID() = %q", got)
+	if gid != "gid-1" {
+		t.Fatalf("Add() gid = %q", gid)
 	}
 	status, err := engine.Status("gid-1")
 	if err != nil {
