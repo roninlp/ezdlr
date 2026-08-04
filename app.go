@@ -2,61 +2,39 @@ package main
 
 import (
 	"context"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
-	service *DownloadService
-	context context.Context
+	*DownloadService
+	clipboard ClipboardReader
 }
 
 func NewApp(service *DownloadService) *App {
-	return &App{service: service}
+	return NewAppWithClipboardReader(service, NewWailsClipboardReader(service))
 }
 
-func (a *App) startup(ctx context.Context) { a.context = ctx }
+func NewAppWithClipboardReader(service *DownloadService, clipboard ClipboardReader) *App {
+	return &App{DownloadService: service, clipboard: clipboard}
+}
+
+func (a *App) startup(ctx context.Context) { a.clipboard.Startup(ctx) }
 
 func (a *App) shutdown(context.Context) {
-	_ = a.service.Shutdown()
-}
-
-func (a *App) AddURL(url string) (DownloadItem, error) {
-	return a.service.AddURL(url)
+	_ = a.DownloadService.Shutdown()
 }
 
 func (a *App) ReviewClipboard(text string) ClipboardReview {
-	return a.service.ReviewClipboard(text)
+	return a.clipboard.ReviewClipboard(text)
 }
 
 func (a *App) ReadClipboard() (string, error) {
-	return runtime.ClipboardGetText(a.context)
+	return a.clipboard.ReadClipboard()
 }
 
 func (a *App) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
-	return a.service.ConfirmClipboard(review)
+	return a.clipboard.ConfirmClipboard(review)
 }
 
 func (a *App) CancelClipboardReview() {
-	a.service.CancelClipboardReview()
+	a.clipboard.CancelClipboardReview()
 }
-
-func (a *App) Snapshot() ServiceSnapshot {
-	return a.service.Snapshot()
-}
-
-func (a *App) Configuration() Configuration {
-	return a.service.Configuration()
-}
-
-func (a *App) MoveUp(id string) error { return a.service.MoveUp(id) }
-
-func (a *App) MoveDown(id string) error { return a.service.MoveDown(id) }
-
-func (a *App) Pause(id string) error { return a.service.Pause(id) }
-
-func (a *App) Resume(id string) error { return a.service.Resume(id) }
-
-func (a *App) Cancel(id string) error { return a.service.Cancel(id) }
-
-func (a *App) Retry(id string) error { return a.service.Retry(id) }
