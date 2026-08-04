@@ -12,11 +12,16 @@ import {
   AddURL,
   Cancel,
   CancelClipboardReview,
+  ClearCompleted,
   ConfirmClipboard,
+  Delete,
   MoveDown,
   MoveUp,
+  OpenDirectory,
+  OpenFile,
   Pause,
   ReadClipboard,
+  Remove,
   Resume,
   Retry,
   ReviewClipboard,
@@ -106,6 +111,10 @@ function Icon(props: { name: string; size?: number }) {
     arrowdown: "M12 5v14M5 12l7 7 7-7",
     alert:
       "M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z",
+    external:
+      "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3",
+    trash:
+      "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6",
   };
   return (
     <svg {...common}>
@@ -363,6 +372,21 @@ function App() {
                 <p class="queue-sub">Moving, waiting, or ready to collect.</p>
               </div>
               <div class="controls">
+                <Show when={finishedCount() > 0}>
+                  <button
+                    class="clear-btn"
+                    onClick={() =>
+                      action(
+                        () => ClearCompleted(),
+                        "Completed downloads cleared from the list.",
+                      )
+                    }
+                    disabled={busy()}
+                    title="Remove all completed downloads from the list"
+                  >
+                    <Icon name="trash" size={13} /> Clear completed
+                  </button>
+                </Show>
                 <label class="search">
                   <Icon name="search" size={14} />
                   <input
@@ -639,6 +663,58 @@ function QueueItem(props: {
               class="icon-btn"
             >
               <Icon name="retry" size={15} />
+            </button>
+          </Show>
+          <Show when={item().state === "complete"}>
+            <button
+              title="Open file"
+              aria-label="Open file"
+              disabled={props.busy}
+              onClick={() =>
+                props.onAction(() => OpenFile(item().id), "File opened.")
+              }
+              class="icon-btn"
+            >
+              <Icon name="external" size={15} />
+            </button>
+            <button
+              title="Open folder"
+              aria-label="Open folder"
+              disabled={props.busy}
+              onClick={() =>
+                props.onAction(() => OpenDirectory(item().id), "Folder opened.")
+              }
+              class="icon-btn"
+            >
+              <Icon name="folder" size={15} />
+            </button>
+            <button
+              title="Remove from list"
+              aria-label="Remove from list"
+              disabled={props.busy}
+              onClick={() =>
+                props.onAction(
+                  () => Remove(item().id),
+                  "Download removed from the list.",
+                )
+              }
+              class="icon-btn"
+            >
+              <Icon name="x" size={15} />
+            </button>
+            <button
+              title="Delete file and remove from list"
+              aria-label="Delete file and remove from list"
+              disabled={props.busy}
+              onClick={() =>
+                props.onAction(
+                  () => Delete(item().id),
+                  "Download and its file were deleted.",
+                )
+              }
+              class="icon-btn danger"
+            >
+              <Icon name="trash" size={15} />
             </button>
           </Show>
           <Show when={item().state !== "complete"}>

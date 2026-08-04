@@ -14,12 +14,20 @@ export function CancelClipboardReview() {
   return window['go']['main']['App']['CancelClipboardReview']();
 }
 
+export function ClearCompleted() {
+  return window['go']['main']['App']['ClearCompleted']();
+}
+
 export function Configuration() {
   return window['go']['main']['App']['Configuration']();
 }
 
 export function ConfirmClipboard(arg1) {
   return window['go']['main']['App']['ConfirmClipboard'](arg1);
+}
+
+export function Delete(arg1) {
+  return window['go']['main']['App']['Delete'](arg1);
 }
 
 export function MoveDown(arg1) {
@@ -30,12 +38,28 @@ export function MoveUp(arg1) {
   return window['go']['main']['App']['MoveUp'](arg1);
 }
 
+export function OpenDirectory(arg1) {
+  return window['go']['main']['App']['OpenDirectory'](arg1);
+}
+
+export function OpenFile(arg1) {
+  return window['go']['main']['App']['OpenFile'](arg1);
+}
+
 export function Pause(arg1) {
   return window['go']['main']['App']['Pause'](arg1);
 }
 
 export function ReadClipboard() {
   return window['go']['main']['App']['ReadClipboard']();
+}
+
+export function Remove(arg1) {
+  return window['go']['main']['App']['Remove'](arg1);
+}
+
+export function Restore() {
+  return window['go']['main']['App']['Restore']();
 }
 
 export function Resume(arg1) {
@@ -50,6 +74,14 @@ export function ReviewClipboard(arg1) {
   return window['go']['main']['App']['ReviewClipboard'](arg1);
 }
 
+export function Shutdown() {
+  return window['go']['main']['App']['Shutdown']();
+}
+
 export function Snapshot() {
   return window['go']['main']['App']['Snapshot']();
+}
+
+export function Start() {
+  return window['go']['main']['App']['Start']();
 }

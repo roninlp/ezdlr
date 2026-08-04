@@ -306,3 +306,35 @@ func TestFailedDownloadDoesNotBlockLaterWorkAndCanBeRetried(t *testing.T) {
 		t.Fatalf("manual retry state = %q, want active", got)
 	}
 }
+
+type missingDownloadCancelEngine struct {
+	*FakeEngine
+}
+
+func (e *missingDownloadCancelEngine) Cancel(string) error {
+	return errors.New(`aria2 RPC returned HTTP 400: {"error":{"message":"Active Download not found for GID#old"}}`)
+}
+
+func TestRetryReplacesDownloadWhenAria2AlreadyRemovedOldGID(t *testing.T) {
+	engine := &missingDownloadCancelEngine{FakeEngine: NewFakeEngine()}
+	service := NewDownloadService(engine)
+	item, err := service.AddURL("https://example.com/file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
+	engine.items[item.GID] = EngineStatus{GID: item.GID, Status: StateFailed}
+	if err := service.loop.Tick(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.Retry(item.ID); err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+	current := service.Snapshot().Items[0]
+	if current.State != StateActive || current.GID == item.GID {
+		t.Fatalf("retry did not create a replacement transfer: %#v", current)
+	}
+}

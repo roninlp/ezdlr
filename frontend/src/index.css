@@ -328,6 +328,27 @@ button:disabled { cursor: default; }
 .queue-sub { margin: 8px 0 0; font-size: 13px; color: var(--mute); }
 .controls { display: flex; gap: 8px; align-items: center; }
 
+.clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--mute);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.clear-btn:hover { border-color: var(--danger); color: var(--danger); }
+.clear-btn:disabled { opacity: 0.4; }
+
 .search {
   display: flex;
   align-items: center;

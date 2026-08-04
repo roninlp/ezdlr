@@ -8,17 +8,29 @@ export function Cancel(arg1:string):Promise<void>;
 
 export function CancelClipboardReview():Promise<void>;
 
+export function ClearCompleted():Promise<void>;
+
 export function Configuration():Promise<main.Configuration>;
 
 export function ConfirmClipboard(arg1:main.ClipboardReview):Promise<main.ClipboardBatchResult>;
+
+export function Delete(arg1:string):Promise<void>;
 
 export function MoveDown(arg1:string):Promise<void>;
 
 export function MoveUp(arg1:string):Promise<void>;
 
+export function OpenDirectory(arg1:string):Promise<void>;
+
+export function OpenFile(arg1:string):Promise<void>;
+
 export function Pause(arg1:string):Promise<void>;
 
 export function ReadClipboard():Promise<string>;
+
+export function Remove(arg1:string):Promise<void>;
+
+export function Restore():Promise<void>;
 
 export function Resume(arg1:string):Promise<void>;
 
@@ -26,4 +38,8 @@ export function Retry(arg1:string):Promise<void>;
 
 export function ReviewClipboard(arg1:string):Promise<main.ClipboardReview>;
 
+export function Shutdown():Promise<void>;
+
 export function Snapshot():Promise<main.ServiceSnapshot>;
+
+export function Start():Promise<void>;

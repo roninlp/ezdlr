@@ -6,6 +6,7 @@ export namespace main {
 	    gid?: string;
 	    state: string;
 	    destination: string;
+	    path?: string;
 	    addedAt: string;
 	    totalBytes: number;
 	    completedBytes: number;
@@ -23,6 +24,7 @@ export namespace main {
 	        this.gid = source["gid"];
 	        this.state = source["state"];
 	        this.destination = source["destination"];
+	        this.path = source["path"];
 	        this.addedAt = source["addedAt"];
 	        this.totalBytes = source["totalBytes"];
 	        this.completedBytes = source["completedBytes"];

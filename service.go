@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -24,6 +25,7 @@ type DownloadItem struct {
 	GID            string        `json:"gid,omitempty"`
 	State          DownloadState `json:"state"`
 	Destination    string        `json:"destination"`
+	Path           string        `json:"path,omitempty"`
 	AddedAt        string        `json:"addedAt"`
 	TotalBytes     int64         `json:"totalBytes"`
 	CompletedBytes int64         `json:"completedBytes"`
@@ -80,6 +82,7 @@ type EngineStatus struct {
 	TotalBytes     int64
 	CompletedBytes int64
 	DownloadSpeed  int64
+	Path           string
 }
 
 type EngineDownload struct {
@@ -132,6 +135,38 @@ func (s *DownloadService) Resume(id string) error { return s.loop.resumeItem(id)
 func (s *DownloadService) Cancel(id string) error { return s.loop.cancelItem(id) }
 
 func (s *DownloadService) Retry(id string) error { return s.loop.retryItem(id) }
+
+func (s *DownloadService) Remove(id string) error { return s.loop.removeItem(id) }
+
+func (s *DownloadService) Delete(id string) error { return s.loop.deleteItem(id) }
+
+func (s *DownloadService) ClearCompleted() error { return s.loop.clearCompleted() }
+
+func (s *DownloadService) OpenFile(id string) error {
+	path, _, err := s.loop.itemLocation(id)
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return errors.New("the download has no file on disk")
+	}
+	return defaultOpener(path)
+}
+
+func (s *DownloadService) OpenDirectory(id string) error {
+	path, destination, err := s.loop.itemLocation(id)
+	if err != nil {
+		return err
+	}
+	directory := filepath.Dir(path)
+	if directory == "." {
+		directory = destination
+	}
+	if directory == "" {
+		directory = "."
+	}
+	return defaultOpener(directory)
+}
 
 func (s *DownloadService) Configuration() Configuration { return s.loop.configuration() }
 

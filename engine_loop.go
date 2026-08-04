@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -348,6 +349,63 @@ func (l *downloadEngineLoop) cancelItem(id string) error {
 	return nil
 }
 
+func (l *downloadEngineLoop) removeItem(id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	index := l.itemIndex(id)
+	if index < 0 {
+		return errors.New("download was not found")
+	}
+	delete(l.retryAt, id)
+	l.items = append(l.items[:index], l.items[index+1:]...)
+	l.SignalDirty()
+	return nil
+}
+
+func (l *downloadEngineLoop) deleteItem(id string) error {
+	path, err := func() (string, error) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		index := l.itemIndex(id)
+		if index < 0 {
+			return "", errors.New("download was not found")
+		}
+		path := l.items[index].Path
+		delete(l.retryAt, id)
+		l.items = append(l.items[:index], l.items[index+1:]...)
+		l.SignalDirty()
+		return path, nil
+	}()
+	if err != nil {
+		return err
+	}
+	return deleteDownloadFile(path)
+}
+
+func (l *downloadEngineLoop) clearCompleted() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	kept := make([]DownloadItem, 0, len(l.items))
+	for _, item := range l.items {
+		if item.State != StateComplete {
+			kept = append(kept, item)
+		}
+	}
+	l.items = kept
+	l.SignalDirty()
+	return nil
+}
+
+func (l *downloadEngineLoop) itemLocation(id string) (path, destination string, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	index := l.itemIndex(id)
+	if index < 0 {
+		return "", "", errors.New("download was not found")
+	}
+	return l.items[index].Path, l.items[index].Destination, nil
+}
+
 func (l *downloadEngineLoop) retryItem(id string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -383,6 +441,9 @@ func (l *downloadEngineLoop) reconcileLocked(engineItems []EngineDownload) {
 			item.TotalBytes = engineItem.Status.TotalBytes
 			item.CompletedBytes = engineItem.Status.CompletedBytes
 			item.DownloadSpeed = engineItem.Status.DownloadSpeed
+			if engineItem.Status.Path != "" {
+				item.Path = engineItem.Status.Path
+			}
 			delete(byURL, item.URL)
 			continue
 		}
@@ -424,6 +485,9 @@ func (l *downloadEngineLoop) refreshStatusesAndScheduleLocked() bool {
 		l.items[index].TotalBytes = status.TotalBytes
 		l.items[index].CompletedBytes = status.CompletedBytes
 		l.items[index].DownloadSpeed = status.DownloadSpeed
+		if status.Path != "" {
+			l.items[index].Path = status.Path
+		}
 		if previousState != status.Status {
 			l.handleStatusLocked(index)
 			changed = true
@@ -474,7 +538,7 @@ func (l *downloadEngineLoop) resumeLocked(index int) error {
 func (l *downloadEngineLoop) retryLocked(index int) error {
 	item := &l.items[index]
 	if item.GID != "" {
-		if err := l.engine.Cancel(item.GID); err != nil {
+		if err := l.engine.Cancel(item.GID); err != nil && !isMissingEngineDownload(err) {
 			l.retryFailureLocked(index)
 			return err
 		}
@@ -490,6 +554,13 @@ func (l *downloadEngineLoop) retryLocked(index int) error {
 		return err
 	}
 	return nil
+}
+
+// A failed aria2 transfer may already have left the active list by the time
+// the retry is requested. In that case cancelling its old GID is cleanup, not
+// a reason to prevent the replacement transfer from being created.
+func isMissingEngineDownload(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "download not found")
 }
 
 func (l *downloadEngineLoop) retryFailureLocked(index int) {

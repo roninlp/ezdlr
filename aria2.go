@@ -96,7 +96,11 @@ type aria2FileResult struct {
 }
 
 func (s aria2StatusResult) engineStatus() EngineStatus {
-	return EngineStatus{GID: s.GID, Status: mapAria2State(s.Status), TotalBytes: parseCounter(s.TotalLength), CompletedBytes: parseCounter(s.CompletedLength), DownloadSpeed: parseCounter(s.DownloadSpeed)}
+	path := ""
+	if len(s.Files) > 0 {
+		path = s.Files[0].Path
+	}
+	return EngineStatus{GID: s.GID, Status: mapAria2State(s.Status), TotalBytes: parseCounter(s.TotalLength), CompletedBytes: parseCounter(s.CompletedLength), DownloadSpeed: parseCounter(s.DownloadSpeed), Path: path}
 }
 
 func (s aria2StatusResult) download() EngineDownload {
@@ -160,7 +164,7 @@ func (e *Aria2Engine) Add(rawURL, destination string) (string, error) {
 }
 
 func (e *Aria2Engine) Status(gid string) (EngineStatus, error) {
-	result, err := e.client.call(context.Background(), "aria2.tellStatus", gid, []string{"gid", "status", "totalLength", "completedLength", "downloadSpeed"})
+	result, err := e.client.call(context.Background(), "aria2.tellStatus", gid, []string{"gid", "status", "totalLength", "completedLength", "downloadSpeed", "files"})
 	if err != nil {
 		return EngineStatus{}, err
 	}
