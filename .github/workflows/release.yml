@@ -106,6 +106,8 @@ jobs:
           cp "$(command -v aria2c)" AppDir/usr/lib/ezdlr/aria2c
           cp packaging/arch/ezdlr.desktop AppDir/usr/share/applications/ezdlr.desktop
           cp packaging/arch/ezdlr.svg AppDir/usr/share/icons/hicolor/scalable/apps/ezdlr.svg
+          cp packaging/arch/ezdlr.desktop AppDir/ezdlr.desktop
+          cp packaging/arch/ezdlr.svg AppDir/ezdlr.svg
           chmod 755 AppDir/usr/bin/ezdlr AppDir/usr/lib/ezdlr/aria2c
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
@@ -120,7 +122,7 @@ jobs:
           chmod 755 appimagetool.AppImage
           # WebKitGTK's production helper path is distro-specific. Keep GTK
           # and WebKitGTK host-provided instead of bundling Ubuntu's helpers.
-          ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run \
+          ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run --no-appstream \
             AppDir release/ezdlr-linux-amd64.AppImage
 
       - name: Package Windows binary
