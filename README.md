@@ -29,3 +29,5 @@ git push origin v0.1.0-alpha.1
 ```
 
 Release archives include the ezdlr binary and its bundled aria2c executable.
+
+The AppImage also requires GTK 3 and WebKitGTK 4.1 from the host system.

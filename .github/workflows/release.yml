@@ -115,16 +115,11 @@ jobs:
           chmod 755 AppDir/AppRun
 
           curl --fail --location --retry 3 \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
-            --output linuxdeploy.AppImage
-          curl --fail --location --retry 3 \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
             --output appimagetool.AppImage
-          chmod 755 linuxdeploy.AppImage appimagetool.AppImage
-          ./linuxdeploy.AppImage --appimage-extract-and-run \
-            --appdir AppDir \
-            --desktop-file AppDir/usr/share/applications/ezdlr.desktop \
-            --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/ezdlr.svg
+          chmod 755 appimagetool.AppImage
+          # WebKitGTK's production helper path is distro-specific. Keep GTK
+          # and WebKitGTK host-provided instead of bundling Ubuntu's helpers.
           ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run \
             AppDir release/ezdlr-linux-amd64.AppImage
 
