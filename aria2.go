@@ -122,40 +122,32 @@ func mapAria2State(value string) DownloadState {
 }
 
 type Aria2Engine struct {
-	client          *aria2RPCClient
-	cmd             *exec.Cmd
-	shutdownTimeout time.Duration
-	mu              sync.Mutex
-	gids            map[string]string
-	lock            *os.File
-	exit            chan error
-	processDone     chan struct{}
-	processErr      error
+	client  *aria2RPCClient
+	process SupervisedProcess
+	mu      sync.Mutex
+	gids    map[string]string
 }
 
 var _ DownloadEngine = (*Aria2Engine)(nil)
 
 func NewAria2Engine(endpoint, secret string) *Aria2Engine {
-	return &Aria2Engine{client: &aria2RPCClient{url: endpoint, secret: secret, httpClient: &http.Client{Timeout: 5 * time.Second}}, shutdownTimeout: 5 * time.Second, gids: make(map[string]string)}
+	return &Aria2Engine{client: newAria2RPCClient(endpoint, secret), gids: make(map[string]string)}
 }
 
-func (e *Aria2Engine) watchProcess() {
-	if e.cmd == nil || e.exit != nil {
-		return
+func newAria2Engine(process SupervisedProcess) *Aria2Engine {
+	return &Aria2Engine{client: newAria2RPCClient(process.Endpoint(), process.Secret()), process: process, gids: make(map[string]string)}
+}
+
+func newAria2RPCClient(endpoint, secret string) *aria2RPCClient {
+	return &aria2RPCClient{url: endpoint, secret: secret, httpClient: &http.Client{Timeout: 5 * time.Second}}
+}
+
+func (e *Aria2Engine) Exited() <-chan error {
+	if e.process == nil {
+		return nil
 	}
-	e.exit = make(chan error, 1)
-	e.processDone = make(chan struct{})
-	go func() {
-		err := e.cmd.Wait()
-		e.mu.Lock()
-		e.processErr = err
-		e.mu.Unlock()
-		close(e.processDone)
-		e.exit <- err
-	}()
+	return e.process.Exited()
 }
-
-func (e *Aria2Engine) Exited() <-chan error { return e.exit }
 
 func (e *Aria2Engine) Add(rawURL, destination string) error {
 	result, err := e.client.call(context.Background(), "aria2.addUri", []any{rawURL}, map[string]string{"dir": destination, "check-certificate": "true", "pause": "true", "split": "4", "max-connection-per-server": "4"})
@@ -231,51 +223,58 @@ func (e *Aria2Engine) Cancel(gid string) error {
 }
 
 func (e *Aria2Engine) Shutdown() error {
-	ctx, cancel := context.WithTimeout(context.Background(), e.shutdownTimeout)
+	timeout := 5 * time.Second
+	if e.process != nil {
+		timeout = e.process.ShutdownTimeout()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	_, saveErr := e.client.call(ctx, "aria2.saveSession")
 	_, shutdownErr := e.client.call(ctx, "aria2.shutdown")
-	if e.cmd == nil {
-		e.releaseLock()
+	if e.process == nil {
 		return errors.Join(saveErr, shutdownErr)
 	}
-	if e.exit == nil {
-		e.watchProcess()
-	}
-	select {
-	case err := <-e.exit:
-		e.releaseLock()
-		return errors.Join(saveErr, shutdownErr, err)
-	case <-e.processDone:
-		e.mu.Lock()
-		err := e.processErr
-		e.mu.Unlock()
-		e.releaseLock()
-		return errors.Join(saveErr, shutdownErr, err)
-	case <-ctx.Done():
-		_ = e.cmd.Process.Kill()
-		<-e.processDone
-		e.releaseLock()
-		return errors.Join(saveErr, shutdownErr)
-	}
+	return errors.Join(saveErr, shutdownErr, e.process.Shutdown())
 }
 
-func (e *Aria2Engine) releaseLock() {
-	if e.lock == nil {
-		return
-	}
-	_ = e.lock.Close()
-	_ = os.Remove(e.lock.Name())
-	e.lock = nil
+// SupervisedProcess owns the lifecycle of the local aria2 child. The RPC
+// adapter only needs its endpoint, secret, exit notification, and stop hook.
+type SupervisedProcess interface {
+	Endpoint() string
+	Secret() string
+	ShutdownTimeout() time.Duration
+	Exited() <-chan error
+	Shutdown() error
 }
 
 type ManagedAria2Config struct {
 	BinaryPath, DataDirectory, DownloadDirectory string
 	Port                                         int
-	ShutdownTimeout                              time.Duration
+	ShutdownTimeout, ReadinessTimeout            time.Duration
 }
 
 func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
+	process, err := newSupervisedAria2Process(config)
+	if err != nil {
+		return nil, err
+	}
+	return newAria2Engine(process), nil
+}
+
+type supervisedAria2Process struct {
+	endpoint, secret string
+	cmd              *exec.Cmd
+	lock             *os.File
+	timeout          time.Duration
+	exit             chan error
+	done             chan struct{}
+	mu               sync.Mutex
+	err              error
+	shutdownOnce     sync.Once
+	shutdownErr      error
+}
+
+func newSupervisedAria2Process(config ManagedAria2Config) (*supervisedAria2Process, error) {
 	if config.BinaryPath == "" {
 		return nil, errors.New("aria2 binary path is required")
 	}
@@ -288,6 +287,9 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 	if config.ShutdownTimeout == 0 {
 		config.ShutdownTimeout = 5 * time.Second
 	}
+	if config.ReadinessTimeout == 0 {
+		config.ReadinessTimeout = 5 * time.Second
+	}
 	if err := os.MkdirAll(config.DataDirectory, 0700); err != nil {
 		return nil, fmt.Errorf("create aria2 data directory: %w", err)
 	}
@@ -298,9 +300,9 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("aria2 engine is already running or its lock is unavailable: %w", err)
 	}
-	lockClosed := false
+	keepLock := false
 	defer func() {
-		if !lockClosed {
+		if !keepLock {
 			_ = lock.Close()
 			_ = os.Remove(lock.Name())
 		}
@@ -312,58 +314,92 @@ func NewManagedAria2(config ManagedAria2Config) (*Aria2Engine, error) {
 	if port == 0 {
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("allocate aria2 RPC port: %w", err)
 		}
 		port = listener.Addr().(*net.TCPAddr).Port
 		_ = listener.Close()
 	}
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate aria2 RPC secret: %w", err)
 	}
 	secret := hex.EncodeToString(secretBytes)
 	session := filepath.Join(config.DataDirectory, "session.txt")
 	configPath := filepath.Join(config.DataDirectory, "aria2.conf")
-	if file, err := os.OpenFile(configPath, os.O_CREATE|os.O_WRONLY, 0600); err != nil {
-		return nil, fmt.Errorf("create aria2 configuration: %w", err)
-	} else {
-		_ = file.Close()
+	configContents := fmt.Sprintf("enable-rpc=true\nrpc-listen-all=false\nrpc-listen-port=%d\nrpc-secret=%s\ncheck-certificate=true\ndir=%s\nsave-session=%s\nsave-session-interval=30\ninput-file=%s\n", port, secret, config.DownloadDirectory, session, session)
+	if err := os.WriteFile(configPath, []byte(configContents), 0600); err != nil {
+		return nil, fmt.Errorf("materialize aria2 configuration: %w", err)
 	}
 	if file, err := os.OpenFile(session, os.O_CREATE|os.O_WRONLY, 0600); err != nil {
 		return nil, fmt.Errorf("create aria2 session: %w", err)
 	} else {
 		_ = file.Close()
 	}
-	args := []string{"--enable-rpc=true", "--rpc-listen-all=false", "--rpc-listen-port=" + strconv.Itoa(port), "--rpc-secret=" + secret, "--check-certificate=true", "--dir=" + config.DownloadDirectory, "--save-session=" + session, "--save-session-interval=30", "--input-file=" + session, "--conf-path=" + filepath.Join(config.DataDirectory, "aria2.conf")}
-	cmd := exec.Command(config.BinaryPath, args...)
+	cmd := exec.Command(config.BinaryPath, "--conf-path="+configPath)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start aria2: %w", err)
 	}
-	engine := NewAria2Engine(fmt.Sprintf("http://127.0.0.1:%d/jsonrpc", port), secret)
-	engine.cmd = cmd
-	engine.shutdownTimeout = config.ShutdownTimeout
-	engine.lock = lock
-	engine.watchProcess()
-	lockClosed = true
-	deadline := time.Now().Add(5 * time.Second)
+	process := &supervisedAria2Process{endpoint: fmt.Sprintf("http://127.0.0.1:%d/jsonrpc", port), secret: secret, cmd: cmd, lock: lock, timeout: config.ShutdownTimeout, exit: make(chan error, 1), done: make(chan struct{})}
+	go process.wait()
+	keepLock = true
+	client := newAria2RPCClient(process.endpoint, secret)
+	deadline := time.Now().Add(config.ReadinessTimeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		select {
-		case err := <-engine.exit:
-			engine.releaseLock()
+		case err := <-process.exit:
+			process.releaseLock()
 			return nil, fmt.Errorf("aria2 exited before RPC readiness: %w", err)
 		default:
 		}
-		if _, err := engine.client.call(context.Background(), "aria2.getVersion"); err == nil {
-			return engine, nil
+		probeContext, cancel := context.WithDeadline(context.Background(), deadline)
+		_, err = client.call(probeContext, "aria2.getVersion")
+		cancel()
+		if err == nil {
+			return process, nil
 		} else {
 			lastErr = err
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	_ = cmd.Process.Kill()
-	<-engine.exit
-	engine.releaseLock()
+	_ = process.Shutdown()
 	return nil, fmt.Errorf("aria2 RPC did not become ready: %w", lastErr)
+}
+
+func (p *supervisedAria2Process) Endpoint() string               { return p.endpoint }
+func (p *supervisedAria2Process) Secret() string                 { return p.secret }
+func (p *supervisedAria2Process) ShutdownTimeout() time.Duration { return p.timeout }
+func (p *supervisedAria2Process) Exited() <-chan error           { return p.exit }
+func (p *supervisedAria2Process) wait() {
+	err := p.cmd.Wait()
+	p.mu.Lock()
+	p.err = err
+	p.mu.Unlock()
+	close(p.done)
+	p.exit <- err
+}
+func (p *supervisedAria2Process) releaseLock() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.lock != nil {
+		_ = p.lock.Close()
+		_ = os.Remove(p.lock.Name())
+		p.lock = nil
+	}
+}
+func (p *supervisedAria2Process) Shutdown() error {
+	p.shutdownOnce.Do(func() {
+		select {
+		case <-p.done:
+			p.mu.Lock()
+			p.shutdownErr = p.err
+			p.mu.Unlock()
+		case <-time.After(p.timeout):
+			_ = p.cmd.Process.Kill()
+			<-p.done
+		}
+		p.releaseLock()
+	})
+	return p.shutdownErr
 }
