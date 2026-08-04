@@ -2,9 +2,17 @@
   "name": "ezdlr-frontend",
   "private": true,
   "scripts": {
-    "build": "tsc --project tsconfig.json"
+    "build": "vite build",
+    "dev": "vite"
   },
   "devDependencies": {
-    "typescript": "^5.7.2"
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.2",
+    "vite": "^8.2.0",
+    "vite-plugin-solid": "^2.11.14"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.14"
   }
 }

@@ -1,16 +1,21 @@
 package main
 
-import "context"
+import (
+	"context"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
 
 type App struct {
 	service *DownloadService
+	context context.Context
 }
 
 func NewApp(service *DownloadService) *App {
 	return &App{service: service}
 }
 
-func (a *App) startup(context.Context) {}
+func (a *App) startup(ctx context.Context) { a.context = ctx }
 
 func (a *App) shutdown(context.Context) {
 	_ = a.service.Shutdown()
@@ -22,6 +27,10 @@ func (a *App) AddURL(url string) (DownloadItem, error) {
 
 func (a *App) ReviewClipboard(text string) ClipboardReview {
 	return a.service.ReviewClipboard(text)
+}
+
+func (a *App) ReadClipboard() (string, error) {
+	return runtime.ClipboardGetText(a.context)
 }
 
 func (a *App) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {

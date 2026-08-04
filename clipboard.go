@@ -63,7 +63,11 @@ func countClipboardResults(results []ClipboardResult, status string) int {
 var clipboardURLPattern = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s]+`)
 
 func reviewClipboardText(text string, items []DownloadItem) ClipboardReview {
-	review := ClipboardReview{}
+	review := ClipboardReview{
+		Accepted:   []ClipboardURL{},
+		Duplicates: []ClipboardURL{},
+		Rejected:   []ClipboardURL{},
+	}
 	existing := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		existing[item.URL] = struct{}{}
@@ -101,7 +105,7 @@ func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatc
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result := ClipboardBatchResult{}
+	result := ClipboardBatchResult{Results: []ClipboardResult{}}
 	for _, entry := range review.Rejected {
 		result.Results = append(result.Results, ClipboardResult{URL: entry.URL, Status: "rejected", Reason: entry.Reason})
 	}

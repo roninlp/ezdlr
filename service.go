@@ -339,7 +339,7 @@ func (s *DownloadService) Snapshot() ServiceSnapshot {
 		}
 	}
 	s.scheduleLocked()
-	result := ServiceSnapshot{Items: append([]DownloadItem(nil), s.items...), Configuration: s.config}
+	result := ServiceSnapshot{Items: append([]DownloadItem{}, s.items...), Configuration: s.config}
 	go s.saveState()
 	return result
 }

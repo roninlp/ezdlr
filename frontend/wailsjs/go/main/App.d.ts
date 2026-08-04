@@ -18,6 +18,8 @@ export function MoveUp(arg1:string):Promise<void>;
 
 export function Pause(arg1:string):Promise<void>;
 
+export function ReadClipboard():Promise<string>;
+
 export function Resume(arg1:string):Promise<void>;
 
 export function Retry(arg1:string):Promise<void>;

@@ -34,6 +34,10 @@ export function Pause(arg1) {
   return window['go']['main']['App']['Pause'](arg1);
 }
 
+export function ReadClipboard() {
+  return window['go']['main']['App']['ReadClipboard']();
+}
+
 export function Resume(arg1) {
   return window['go']['main']['App']['Resume'](arg1);
 }

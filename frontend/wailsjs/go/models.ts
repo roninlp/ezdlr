@@ -1,5 +1,5 @@
 export namespace main {
-
+	
 	export class DownloadItem {
 	    id: string;
 	    url: string;
@@ -11,11 +11,11 @@ export namespace main {
 	    completedBytes: number;
 	    downloadSpeed: number;
 	    attempts: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DownloadItem(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -35,11 +35,11 @@ export namespace main {
 	    status: string;
 	    reason?: string;
 	    item?: DownloadItem;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClipboardResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
@@ -47,7 +47,7 @@ export namespace main {
 	        this.reason = source["reason"];
 	        this.item = this.convertValues(source["item"], DownloadItem);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -68,16 +68,16 @@ export namespace main {
 	}
 	export class ClipboardBatchResult {
 	    results: ClipboardResult[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClipboardBatchResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.results = this.convertValues(source["results"], ClipboardResult);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -96,15 +96,15 @@ export namespace main {
 		    return a;
 		}
 	}
-
+	
 	export class ClipboardURL {
 	    url: string;
 	    reason?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClipboardURL(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
@@ -115,18 +115,18 @@ export namespace main {
 	    accepted: ClipboardURL[];
 	    duplicates: ClipboardURL[];
 	    rejected: ClipboardURL[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClipboardReview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.accepted = this.convertValues(source["accepted"], ClipboardURL);
 	        this.duplicates = this.convertValues(source["duplicates"], ClipboardURL);
 	        this.rejected = this.convertValues(source["rejected"], ClipboardURL);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -145,17 +145,17 @@ export namespace main {
 		    return a;
 		}
 	}
-
+	
 	export class Configuration {
 	    downloadDirectory: string;
 	    activeLimit: number;
 	    connections: number;
 	    maxRetries: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Configuration(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.downloadDirectory = source["downloadDirectory"];
@@ -164,21 +164,21 @@ export namespace main {
 	        this.maxRetries = source["maxRetries"];
 	    }
 	}
-
+	
 	export class ServiceSnapshot {
 	    items: DownloadItem[];
 	    configuration: Configuration;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ServiceSnapshot(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.items = this.convertValues(source["items"], DownloadItem);
 	        this.configuration = this.convertValues(source["configuration"], Configuration);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -199,3 +199,4 @@ export namespace main {
 	}
 
 }
+
