@@ -93,14 +93,14 @@ jobs:
           cp build/bin/ezdlr release/ezdlr-linux-amd64/ezdlr
           cp "$(command -v aria2c)" release/ezdlr-linux-amd64/aria2c
           chmod 755 release/ezdlr-linux-amd64/ezdlr release/ezdlr-linux-amd64/aria2c
-          tar -C release -czf ezdlr-linux-amd64.tar.gz ezdlr-linux-amd64
+          tar -czf release/ezdlr-linux-amd64.tar.gz -C release ezdlr-linux-amd64
 
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release\ezdlr-windows-amd64 | Out-Null
-          Copy-Item build\bin\ezdlr.exe release\ezdlr-windows-amd64\ezdlr.exe
+          Copy-Item build\bin\ezdlr release\ezdlr-windows-amd64\ezdlr.exe
           Copy-Item (Get-Command aria2c.exe).Source release\ezdlr-windows-amd64\aria2c.exe
           Compress-Archive -Path release\ezdlr-windows-amd64 -DestinationPath release\ezdlr-windows-amd64.zip
 
