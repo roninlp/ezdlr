@@ -1,0 +1,16 @@
+# 02 — Split Aria2Engine into a SupervisedProcess seam and an RPC adapter
+
+**What to build:** The aria2 adapter stops growing three unrelated responsibilities — process supervision, RPC serialization, and response mapping — inside one module. Process supervision (binary launch, port allocation, secret generation, lock-file ownership, config-file materialization, readiness polling, exit-channel publication, bounded shutdown) moves behind its own `SupervisedProcess` seam with two adapters: the real aria2 child process in production and a fake exit-channel-backed stub in tests, so the seam is justified by two concrete implementations. The existing `Aria2Engine` becomes the RPC adapter half: it holds one `SupervisedProcess` and exposes the deep `DownloadEngine` surface, holding only the JSON-RPC client and the GID map. Lock acquisition, port selection, secret generation, config materialization, and the readiness timeout move out of `NewManagedAria2` into the `SupervisedProcess` constructor and become unit-testable with a fake binary (e.g. `/bin/false` for exit-before-readiness) and a stub for the happy path. The dual `Shutdown` paths compose: the RPC adapter's shutdown performs `aria2.saveSession` + `aria2.shutdown` and then delegates the bounded stop (wait on `processDone` vs context-kill on timeout) to `SupervisedProcess.Shutdown()`. From the user's perspective nothing changes; the refactor is verifiable by deterministic supervision unit tests that do not require a real aria2 binary, alongside the existing real-binary contract suite.
+
+**Blocked by:** 01 — Collapse six engine capability interfaces into one deep DownloadEngine interface. The RPC adapter half implements the deep `DownloadEngine` interface established in 01.
+
+**Status:** complete
+
+- [x] A `SupervisedProcess` interface exists behind its own seam, covering binary path, data directory, download directory, port allocation, secret generation, config-file materialization, lock-file ownership, readiness polling, exit-channel publication, and bounded shutdown.
+- [x] Two `SupervisedProcess` adapters exist: the real aria2 child (production) and a fake exit-channel-backed stub (tests), justifying the seam.
+- [x] `NewManagedAria2`'s supervision concerns (lock, port, secret, config, readiness, dual-shutdown) have moved into the `SupervisedProcess` constructor and shutdown method.
+- [x] `Aria2Engine` holds one `SupervisedProcess` and only the JSON-RPC client plus the GID map; it implements the deep `DownloadEngine` interface and no longer owns process lifecycle.
+- [x] `Shutdown` composes `aria2.saveSession` + `aria2.shutdown` on the RPC adapter with `SupervisedProcess.Shutdown()`'s bounded stop.
+- [x] New deterministic supervision unit tests cover lock contention, port allocation, secret generation, readiness timeout, exit-before-readiness, and bounded shutdown; none require `/usr/bin/aria2c`.
+- [x] The existing real-binary contract suite in `aria2_test.go` continues to pin RPC serialization, readiness, session save/restore, GID mapping, process shutdown, loopback/secret configuration, and concurrent-instance lock; tests still skip when the binary is absent.
+- [x] `go test ./...` stays green; no user-visible behavior change.
