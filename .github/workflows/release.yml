@@ -22,6 +22,15 @@ jobs:
           - name: windows-amd64
             os: windows-latest
             platform: windows/amd64
+            arch: amd64
+          - name: macos-amd64
+            os: macos-13
+            platform: darwin/amd64
+            arch: amd64
+          - name: macos-arm64
+            os: macos-14
+            platform: darwin/arm64
+            arch: arm64
 
     steps:
       - name: Check out source
@@ -59,6 +68,10 @@ jobs:
             Add-Content $env:GITHUB_PATH 'C:\mingw64\bin'
           }
           gcc --version
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install aria2
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -133,6 +146,37 @@ jobs:
           Copy-Item build\bin\ezdlr release\ezdlr-windows-amd64\ezdlr.exe
           Copy-Item (Get-Command aria2c.exe).Source release\ezdlr-windows-amd64\aria2c.exe
           Compress-Archive -Path release\ezdlr-windows-amd64 -DestinationPath release\ezdlr-windows-amd64.zip
+
+      - name: Package macOS application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="release/ezdlr-macos-${{ matrix.arch }}.app"
+          mkdir -p "$app/Contents/MacOS"
+          cp build/bin/ezdlr "$app/Contents/MacOS/ezdlr"
+          cp "$(command -v aria2c)" "$app/Contents/MacOS/aria2c"
+          cat > "$app/Contents/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key>
+            <string>ezdlr</string>
+            <key>CFBundleExecutable</key>
+            <string>ezdlr</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.ezdlr.app</string>
+            <key>CFBundleName</key>
+            <string>ezdlr</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleVersion</key>
+            <string>${{ github.run_number }}</string>
+          </dict>
+          </plist>
+          EOF
+          chmod 755 "$app/Contents/MacOS/ezdlr" "$app/Contents/MacOS/aria2c"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release/ezdlr-macos-${{ matrix.arch }}.zip"
 
       - name: Upload packaged binary
         uses: actions/upload-artifact@v4

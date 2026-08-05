@@ -21,13 +21,15 @@ go test ./...
 
 ## Releases
 
-Push a version tag to build and publish Linux amd64 and Windows amd64 archives:
+Push a version tag to build and publish Linux amd64, Windows amd64, and macOS
+amd64 and arm64 archives:
 
 ```sh
 git tag v0.1.0-alpha.1
 git push origin v0.1.0-alpha.1
 ```
 
-Release archives include the ezdlr binary and its bundled aria2c executable.
+Release archives include the ezdlr binary and its bundled aria2c executable. The
+macOS archives contain an application bundle that can be opened from Finder.
 
 The AppImage also requires GTK 3 and WebKitGTK 4.1 from the host system.
