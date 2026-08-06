@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v0.1.0-alpha.11)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -204,4 +210,5 @@ jobs:
             release/*.zip
             release/*.AppImage
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
