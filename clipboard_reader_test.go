@@ -18,7 +18,11 @@ func TestCannedClipboardReaderUsesClipboardTextAdapter(t *testing.T) {
 	if review.AcceptedCount() != 1 {
 		t.Fatalf("accepted count = %d, want 1", review.AcceptedCount())
 	}
-	if result := app.ConfirmClipboard(review); result.AcceptedCount() != 1 {
+	result, err := app.ConfirmClipboard(review, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AcceptedCount() != 1 {
 		t.Fatalf("accepted result count = %d, want 1", result.AcceptedCount())
 	}
 }

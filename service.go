@@ -24,6 +24,8 @@ type DownloadItem struct {
 	URL            string        `json:"url"`
 	GID            string        `json:"gid,omitempty"`
 	State          DownloadState `json:"state"`
+	QueueID        string        `json:"queueId"`
+	QueuePaused    bool          `json:"queuePaused,omitempty"`
 	Destination    string        `json:"destination"`
 	Path           string        `json:"path,omitempty"`
 	AddedAt        string        `json:"addedAt"`
@@ -31,6 +33,45 @@ type DownloadItem struct {
 	CompletedBytes int64         `json:"completedBytes"`
 	DownloadSpeed  int64         `json:"downloadSpeed"`
 	Attempts       int           `json:"attempts"`
+}
+
+// DownloadQueue groups downloads behind one start/stop control. Downloads are
+// only scheduled while their queue is running, so a queue that is stopped
+// holds its downloads — including ones that were already running when it was
+// stopped, which are paused and marked QueuePaused so starting the queue
+// resumes them instead of losing them.
+type DownloadQueue struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Running bool   `json:"running"`
+	BuiltIn bool   `json:"builtIn"`
+}
+
+const (
+	// MainQueueID is the built-in queue that single links from the intake
+	// field join by default. It is the only queue that starts out running.
+	MainQueueID = "main"
+	// ClipboardQueueID is the queue clipboard batches land in by default.
+	// It starts stopped so a pasted batch never begins downloading on its own.
+	ClipboardQueueID = "clipboard"
+)
+
+func defaultQueues() []DownloadQueue {
+	return []DownloadQueue{
+		{ID: MainQueueID, Name: "Main", Running: true, BuiltIn: true},
+		{ID: ClipboardQueueID, Name: "Clipboard", Running: false},
+	}
+}
+
+func validateQueueName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", errors.New("enter a name for the queue")
+	}
+	if len([]rune(trimmed)) > 48 {
+		return "", errors.New("queue names are limited to 48 characters")
+	}
+	return trimmed, nil
 }
 
 type Configuration struct {
@@ -61,8 +102,9 @@ func defaultConfiguration() Configuration {
 }
 
 type ServiceSnapshot struct {
-	Items         []DownloadItem `json:"items"`
-	Configuration Configuration  `json:"configuration"`
+	Items         []DownloadItem  `json:"items"`
+	Queues        []DownloadQueue `json:"queues"`
+	Configuration Configuration   `json:"configuration"`
 }
 
 // ItemProgress is the counter-only half of the queue update. It is what the
@@ -85,6 +127,18 @@ const (
 	EventQueueSnapshot = "ezdlr:queue:snapshot"
 	EventQueueProgress = "ezdlr:queue:progress"
 )
+
+// BatchFailure reports one item of a bulk action that did not apply.
+type BatchFailure struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// BatchResult is the outcome of a bulk action over a selection of downloads.
+type BatchResult struct {
+	Succeeded []string       `json:"succeeded"`
+	Failures  []BatchFailure `json:"failures"`
+}
 
 type DownloadEngine interface {
 	Add(url string, destination string) (string, error)
@@ -135,15 +189,91 @@ func (s *DownloadService) Start() { s.loop.Start() }
 
 func (s *DownloadService) Restore() error { return s.loop.restore() }
 
-func (s *DownloadService) AddURL(rawURL string) (DownloadItem, error) {
+// AddURL validates a single link and enqueues it in queueID. An empty
+// queueID means the main queue, which is where the intake field sends links
+// by default; links only wait when the caller picks a queue that is stopped.
+func (s *DownloadService) AddURL(rawURL string, queueID string) (DownloadItem, error) {
 	cleanURL, err := validateURL(rawURL)
 	if err != nil {
 		return DownloadItem{}, err
 	}
-	return s.loop.addURL(cleanURL)
+	if queueID == "" {
+		queueID = MainQueueID
+	}
+	return s.loop.addURL(cleanURL, queueID)
 }
 
 func (s *DownloadService) Snapshot() ServiceSnapshot { return s.loop.snapshot() }
+
+func (s *DownloadService) CreateQueue(name string) (DownloadQueue, error) {
+	return s.loop.createQueue(name)
+}
+
+func (s *DownloadService) RenameQueue(id string, name string) error {
+	return s.loop.renameQueue(id, name)
+}
+
+func (s *DownloadService) DeleteQueue(id string) error { return s.loop.deleteQueue(id) }
+
+func (s *DownloadService) StartQueue(id string) error { return s.loop.setQueueRunning(id, true) }
+
+func (s *DownloadService) StopQueue(id string) error { return s.loop.setQueueRunning(id, false) }
+
+// MoveToQueue repoints every listed download at queueID in one operation, so
+// a context-menu selection does not turn into one IPC call per row.
+func (s *DownloadService) MoveToQueue(ids []string, queueID string) BatchResult {
+	if err := s.loop.queueExists(queueID); err != nil {
+		return failedBatch(ids, err.Error())
+	}
+	return s.batch(ids, func(id string) error { return s.loop.setItemQueue(id, queueID) })
+}
+
+func (s *DownloadService) PauseBatch(ids []string) BatchResult {
+	return s.batch(ids, func(id string) error { return s.loop.pauseItem(id) })
+}
+
+func (s *DownloadService) ResumeBatch(ids []string) BatchResult {
+	return s.batch(ids, func(id string) error { return s.loop.resumeItem(id) })
+}
+
+func (s *DownloadService) CancelBatch(ids []string) BatchResult {
+	return s.batch(ids, func(id string) error { return s.loop.cancelItem(id) })
+}
+
+func (s *DownloadService) RetryBatch(ids []string) BatchResult {
+	return s.batch(ids, func(id string) error { return s.loop.retryItem(id) })
+}
+
+func (s *DownloadService) RemoveBatch(ids []string) BatchResult {
+	return s.batch(ids, func(id string) error { return s.loop.removeItem(id) })
+}
+
+func (s *DownloadService) DeleteBatch(ids []string) BatchResult {
+	return s.batch(ids, func(id string) error { return s.loop.deleteItem(id) })
+}
+
+func (s *DownloadService) batch(ids []string, operation func(string) error) BatchResult {
+	result := BatchResult{Succeeded: []string{}, Failures: []BatchFailure{}}
+	for _, id := range ids {
+		if err := operation(id); err != nil {
+			result.Failures = append(result.Failures, BatchFailure{ID: id, Reason: err.Error()})
+			continue
+		}
+		result.Succeeded = append(result.Succeeded, id)
+	}
+	return result
+}
+
+// failedBatch reports every listed download as failed for one reason, used
+// when a bulk action cannot apply at all — for instance when the queue it
+// targets no longer exists.
+func failedBatch(ids []string, reason string) BatchResult {
+	result := BatchResult{Succeeded: []string{}, Failures: []BatchFailure{}}
+	for _, id := range ids {
+		result.Failures = append(result.Failures, BatchFailure{ID: id, Reason: reason})
+	}
+	return result
+}
 
 // setNotify installs the backend-to-frontend push channel. It is unexported on
 // purpose: it takes a Go function, so it must never become a Wails binding.

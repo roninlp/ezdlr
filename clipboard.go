@@ -97,11 +97,21 @@ func (s *DownloadService) ReviewClipboard(text string) ClipboardReview {
 	return reviewClipboardText(text, s.loop.itemsSnapshot())
 }
 
-func (s *DownloadService) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
-	return s.loop.confirmClipboard(review)
+// ConfirmClipboard enqueues the reviewed links in queueID. The queue choice
+// belongs to the caller because it decides whether the batch starts: the
+// default clipboard queue is stopped, so a confirmed batch waits until the
+// user starts it.
+func (s *DownloadService) ConfirmClipboard(review ClipboardReview, queueID string) (ClipboardBatchResult, error) {
+	if queueID == "" {
+		queueID = ClipboardQueueID
+	}
+	if err := s.loop.queueExists(queueID); err != nil {
+		return ClipboardBatchResult{}, err
+	}
+	return s.loop.confirmClipboard(review, queueID), nil
 }
 
-func (l *downloadEngineLoop) confirmClipboard(review ClipboardReview) ClipboardBatchResult {
+func (l *downloadEngineLoop) confirmClipboard(review ClipboardReview, queueID string) ClipboardBatchResult {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -125,7 +135,7 @@ func (l *downloadEngineLoop) confirmClipboard(review ClipboardReview) ClipboardB
 			result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "duplicate", Reason: "URL is already represented in the queue"})
 			continue
 		}
-		item, err := l.enqueueLocked(cleanURL)
+		item, err := l.enqueueLocked(cleanURL, queueID)
 		if err != nil {
 			result.Results = append(result.Results, ClipboardResult{URL: cleanURL, Status: "enqueue-failure", Reason: err.Error()})
 			continue

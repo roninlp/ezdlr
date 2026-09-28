@@ -29,8 +29,8 @@ func (a *App) ReadClipboard() (string, error) {
 	return a.clipboard.ReadClipboard()
 }
 
-func (a *App) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
-	return a.clipboard.ConfirmClipboard(review)
+func (a *App) ConfirmClipboard(review ClipboardReview, queueID string) (ClipboardBatchResult, error) {
+	return a.clipboard.ConfirmClipboard(review, queueID)
 }
 
 func (a *App) CancelClipboardReview() {

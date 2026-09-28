@@ -10,7 +10,7 @@ import (
 type ClipboardReader interface {
 	ReadClipboard() (string, error)
 	ReviewClipboard(string) ClipboardReview
-	ConfirmClipboard(ClipboardReview) ClipboardBatchResult
+	ConfirmClipboard(ClipboardReview, string) (ClipboardBatchResult, error)
 	CancelClipboardReview()
 }
 
@@ -37,8 +37,8 @@ func (r serviceClipboardReader) ReviewClipboard(text string) ClipboardReview {
 	return r.service.ReviewClipboard(text)
 }
 
-func (r serviceClipboardReader) ConfirmClipboard(review ClipboardReview) ClipboardBatchResult {
-	return r.service.ConfirmClipboard(review)
+func (r serviceClipboardReader) ConfirmClipboard(review ClipboardReview, queueID string) (ClipboardBatchResult, error) {
+	return r.service.ConfirmClipboard(review, queueID)
 }
 
 func (r serviceClipboardReader) CancelClipboardReview() { r.service.CancelClipboardReview() }

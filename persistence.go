@@ -13,9 +13,53 @@ const persistenceVersion = 1
 type persistedState struct {
 	Version       int               `json:"version"`
 	Items         []DownloadItem    `json:"items"`
+	Queues        []DownloadQueue   `json:"queues,omitempty"`
+	NextQueueID   int               `json:"nextQueueId,omitempty"`
 	Configuration Configuration     `json:"configuration"`
 	NextID        int               `json:"nextId"`
 	RetryAt       map[string]string `json:"retryAt,omitempty"`
+}
+
+// migrateQueues fills in what an older or empty state file does not carry: the
+// built-in queues, a main queue to fall back on, and a counter that cannot
+// collide with an existing queue ID. The version stays at 1 because the
+// addition is purely optional data — a state file without queues still loads.
+func migrateQueues(queues []DownloadQueue, nextQueueID int) ([]DownloadQueue, int) {
+	migrated := append([]DownloadQueue(nil), queues...)
+	if len(migrated) == 0 {
+		migrated = defaultQueues()
+	}
+	known := make(map[string]struct{}, len(migrated))
+	for _, queue := range migrated {
+		known[queue.ID] = struct{}{}
+	}
+	if _, exists := known[MainQueueID]; !exists {
+		migrated = append([]DownloadQueue{{ID: MainQueueID, Name: "Main", Running: true, BuiltIn: true}}, migrated...)
+	}
+	if nextQueueID < 1 {
+		nextQueueID = 1
+	}
+	for _, queue := range migrated {
+		var number int
+		if _, err := fmt.Sscanf(queue.ID, "queue-%d", &number); err == nil && number >= nextQueueID {
+			nextQueueID = number + 1
+		}
+	}
+	return migrated, nextQueueID
+}
+
+// assignItemQueues gives every download without a valid queue a home, so a
+// deleted or older queue reference can never strand a transfer.
+func assignItemQueues(items []DownloadItem, queues []DownloadQueue) {
+	known := make(map[string]struct{}, len(queues))
+	for _, queue := range queues {
+		known[queue.ID] = struct{}{}
+	}
+	for index := range items {
+		if _, exists := known[items[index].QueueID]; !exists {
+			items[index].QueueID = MainQueueID
+		}
+	}
 }
 
 type StateStore interface {

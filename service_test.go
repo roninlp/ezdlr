@@ -22,7 +22,7 @@ func TestAddURLCreatesQueuedItemAndUsesConfiguredDestination(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
 
-	item, err := service.AddURL("  https://example.com/archive.zip  ")
+	item, err := service.AddURL("  https://example.com/archive.zip  ", "")
 	if err != nil {
 		t.Fatalf("AddURL() error = %v", err)
 	}
@@ -51,7 +51,7 @@ func TestAddURLRejectsUnsupportedAndCredentialBearingURLs(t *testing.T) {
 		{name: "missing host", url: "https:///file"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := service.AddURL(test.url); err == nil {
+			if _, err := service.AddURL(test.url, ""); err == nil {
 				t.Fatal("AddURL() error = nil, want validation error")
 			}
 		})
@@ -61,10 +61,10 @@ func TestAddURLRejectsUnsupportedAndCredentialBearingURLs(t *testing.T) {
 func TestAddURLRejectsDuplicatesWithoutCallingEngine(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	if _, err := service.AddURL("https://example.com/file"); err != nil {
+	if _, err := service.AddURL("https://example.com/file", ""); err != nil {
 		t.Fatal(err)
 	}
-	_, err := service.AddURL(" https://example.com/file ")
+	_, err := service.AddURL(" https://example.com/file ", "")
 	if err == nil {
 		t.Fatal("duplicate AddURL() should fail")
 	}
@@ -78,7 +78,7 @@ func TestReviewClipboardExtractsAndClassifiesURLsWithoutEnqueueing(t *testing.T)
 	service := NewDownloadService(engine)
 	clipboardText := "notes https://example.com/one\nhttps://example.com/one ftp://example.com/file https://user:pass@example.com/private https:///broken https://example.com/existing"
 	app := NewAppWithClipboardReader(service, NewCannedClipboardReader(service, clipboardText))
-	if _, err := service.AddURL("https://example.com/existing"); err != nil {
+	if _, err := service.AddURL("https://example.com/existing", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +111,10 @@ func TestConfirmClipboardUsesConfiguredDestinationAndReturnsItemLinks(t *testing
 	}
 	review := app.ReviewClipboard(text)
 
-	result := app.ConfirmClipboard(review)
+	result, err := app.ConfirmClipboard(review, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.AcceptedCount() != 2 {
 		t.Fatalf("accepted count = %d", result.AcceptedCount())
 	}
@@ -133,7 +136,10 @@ func TestConfirmClipboardContinuesAfterPartialEnqueueFailure(t *testing.T) {
 	}
 	review := app.ReviewClipboard(text)
 
-	result := app.ConfirmClipboard(review)
+	result, err := app.ConfirmClipboard(review, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.AcceptedCount() != 2 || result.EnqueueFailureCount() != 1 {
 		t.Fatalf("batch result = %#v", result.Results)
 	}
@@ -171,10 +177,10 @@ func TestShutdownClosesEngine(t *testing.T) {
 func TestQueueSchedulesThreeAndProgressesFIFO(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	first, _ := service.AddURL("https://example.com/1")
-	second, _ := service.AddURL("https://example.com/2")
-	third, _ := service.AddURL("https://example.com/3")
-	fourth, _ := service.AddURL("https://example.com/4")
+	first, _ := service.AddURL("https://example.com/1", "")
+	second, _ := service.AddURL("https://example.com/2", "")
+	third, _ := service.AddURL("https://example.com/3", "")
+	fourth, _ := service.AddURL("https://example.com/4", "")
 
 	if err := service.loop.Tick(); err != nil {
 		t.Fatal(err)
@@ -204,7 +210,7 @@ func TestQueueSchedulesThreeAndProgressesFIFO(t *testing.T) {
 func TestQueueLifecycleControlsPreserveItemSemantics(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	item, _ := service.AddURL("https://example.com/file")
+	item, _ := service.AddURL("https://example.com/file", "")
 	if err := service.loop.Tick(); err != nil {
 		t.Fatal(err)
 	}
@@ -228,11 +234,11 @@ func TestQueueLifecycleControlsPreserveItemSemantics(t *testing.T) {
 func TestQueuedItemsMoveWithoutReorderingActiveItems(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	first, _ := service.AddURL("https://example.com/1")
-	second, _ := service.AddURL("https://example.com/2")
-	third, _ := service.AddURL("https://example.com/3")
-	fourth, _ := service.AddURL("https://example.com/4")
-	fifth, _ := service.AddURL("https://example.com/5")
+	first, _ := service.AddURL("https://example.com/1", "")
+	second, _ := service.AddURL("https://example.com/2", "")
+	third, _ := service.AddURL("https://example.com/3", "")
+	fourth, _ := service.AddURL("https://example.com/4", "")
+	fifth, _ := service.AddURL("https://example.com/5", "")
 	if err := service.loop.Tick(); err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +260,7 @@ func TestQueuedItemsMoveWithoutReorderingActiveItems(t *testing.T) {
 func TestQueueRetriesTransientFailuresAndStopsAtLimit(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	_, _ = service.AddURL("https://example.com/file")
+	_, _ = service.AddURL("https://example.com/file", "")
 	if err := service.loop.Tick(); err != nil {
 		t.Fatal(err)
 	}
@@ -283,8 +289,8 @@ func TestQueueRetriesTransientFailuresAndStopsAtLimit(t *testing.T) {
 func TestFailedDownloadDoesNotBlockLaterWorkAndCanBeRetried(t *testing.T) {
 	engine := NewFakeEngine()
 	service := NewDownloadService(engine)
-	failed, _ := service.AddURL("https://example.com/failed")
-	later, _ := service.AddURL("https://example.com/later")
+	failed, _ := service.AddURL("https://example.com/failed", "")
+	later, _ := service.AddURL("https://example.com/later", "")
 	if err := service.loop.Tick(); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +324,7 @@ func (e *missingDownloadCancelEngine) Cancel(string) error {
 func TestRetryReplacesDownloadWhenAria2AlreadyRemovedOldGID(t *testing.T) {
 	engine := &missingDownloadCancelEngine{FakeEngine: NewFakeEngine()}
 	service := NewDownloadService(engine)
-	item, err := service.AddURL("https://example.com/file")
+	item, err := service.AddURL("https://example.com/file", "")
 	if err != nil {
 		t.Fatal(err)
 	}

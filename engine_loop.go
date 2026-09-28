@@ -27,13 +27,15 @@ type downloadEngineLoop struct {
 	engine DownloadEngine
 	store  StateStore
 
-	mu      sync.Mutex
-	items   []DownloadItem
-	config  Configuration
-	nextID  int
-	retryAt map[string]time.Time
-	emitted *emittedState
-	saveMu  sync.Mutex
+	mu          sync.Mutex
+	items       []DownloadItem
+	queues      []DownloadQueue
+	nextQueueID int
+	config      Configuration
+	nextID      int
+	retryAt     map[string]time.Time
+	emitted     *emittedState
+	saveMu      sync.Mutex
 
 	dirty           chan struct{}
 	wake            chan struct{}
@@ -71,6 +73,7 @@ type pendingNotify struct {
 type emittedState struct {
 	items  []DownloadItem
 	config Configuration
+	queues []DownloadQueue
 }
 
 // fastRefreshInterval is how often the loop pulls fresh transfer counters from
@@ -80,13 +83,15 @@ var fastRefreshInterval = 500 * time.Millisecond
 
 func newDownloadEngineLoop(engine DownloadEngine, store StateStore) *downloadEngineLoop {
 	return &downloadEngineLoop{
-		engine:  engine,
-		store:   store,
-		config:  defaultConfiguration(),
-		retryAt: make(map[string]time.Time),
-		dirty:   make(chan struct{}, 1),
-		wake:    make(chan struct{}, 1),
-		exited:  engine.Exited(),
+		engine:      engine,
+		store:       store,
+		config:      defaultConfiguration(),
+		queues:      defaultQueues(),
+		nextQueueID: 1,
+		retryAt:     make(map[string]time.Time),
+		dirty:       make(chan struct{}, 1),
+		wake:        make(chan struct{}, 1),
+		exited:      engine.Exited(),
 	}
 }
 
@@ -202,6 +207,7 @@ func (l *downloadEngineLoop) prepareNotifyLocked() {
 		l.emitted = &emittedState{
 			items:  snapshot.Items,
 			config: snapshot.Configuration,
+			queues: snapshot.Queues,
 		}
 		l.stageNotify(&pendingNotify{snapshot: &snapshot})
 		return
@@ -215,7 +221,7 @@ func (l *downloadEngineLoop) prepareNotifyLocked() {
 // counters moved. Callers must hold l.mu.
 func (l *downloadEngineLoop) structureChangedLocked() bool {
 	emitted := l.emitted
-	if len(l.items) != len(emitted.items) {
+	if len(l.items) != len(emitted.items) || len(l.queues) != len(emitted.queues) {
 		return true
 	}
 	if l.config != emitted.config {
@@ -223,6 +229,13 @@ func (l *downloadEngineLoop) structureChangedLocked() bool {
 	}
 	for index := range l.items {
 		if itemStructureDiffers(l.items[index], emitted.items[index]) {
+			return true
+		}
+	}
+	for index := range l.queues {
+		queue, previous := l.queues[index], emitted.queues[index]
+		if queue.ID != previous.ID || queue.Name != previous.Name ||
+			queue.Running != previous.Running || queue.BuiltIn != previous.BuiltIn {
 			return true
 		}
 	}
@@ -234,6 +247,8 @@ func itemStructureDiffers(left, right DownloadItem) bool {
 		left.URL != right.URL ||
 		left.GID != right.GID ||
 		left.State != right.State ||
+		left.QueueID != right.QueueID ||
+		left.QueuePaused != right.QueuePaused ||
 		left.Destination != right.Destination ||
 		left.Path != right.Path ||
 		left.AddedAt != right.AddedAt
@@ -334,10 +349,10 @@ func (l *downloadEngineLoop) Tick() error {
 	return err
 }
 
-// refreshPass is the fast pass. It pulls fresh counters for the downloads that
-// are actually moving, schedules whatever is now eligible, and stages the
-// counter update for the frontend. It never reads or writes the store, so
-// progress stays current without extra disk writes.
+// refreshPass is the fast pass. It re-applies queue start/stop, pulls fresh
+// counters for the downloads that are actually moving, schedules whatever is
+// now eligible, and stages the counter update for the frontend. It never reads
+// or writes the store, so progress stays current without extra disk writes.
 func (l *downloadEngineLoop) refreshPass() {
 	l.mu.Lock()
 	if l.refreshStatusesAndScheduleLocked(true) {
@@ -425,6 +440,8 @@ func (l *downloadEngineLoop) restoreState(state persistedState) {
 	defer l.mu.Unlock()
 	l.items = append([]DownloadItem(nil), state.Items...)
 	l.config = applyConfigurationDefaults(state.Configuration)
+	l.queues, l.nextQueueID = migrateQueues(state.Queues, state.NextQueueID)
+	assignItemQueues(l.items, l.queues)
 	l.nextID = state.NextID
 	if l.nextID < nextIDAfterItems(l.items) {
 		l.nextID = nextIDAfterItems(l.items)
@@ -444,7 +461,11 @@ func (l *downloadEngineLoop) setDownloadDirectory(directory string) {
 }
 
 func (l *downloadEngineLoop) snapshotLocked() ServiceSnapshot {
-	return ServiceSnapshot{Items: append([]DownloadItem(nil), l.items...), Configuration: l.config}
+	return ServiceSnapshot{
+		Items:         append([]DownloadItem(nil), l.items...),
+		Queues:        append([]DownloadQueue(nil), l.queues...),
+		Configuration: l.config,
+	}
 }
 
 func (l *downloadEngineLoop) snapshot() ServiceSnapshot {
@@ -463,20 +484,24 @@ func (l *downloadEngineLoop) configuration() Configuration {
 	return l.config
 }
 
-func (l *downloadEngineLoop) addURL(cleanURL string) (DownloadItem, error) {
+func (l *downloadEngineLoop) addURL(cleanURL string, queueID string) (DownloadItem, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.queueLocked(queueID) == nil {
+		return DownloadItem{}, errors.New("that queue no longer exists")
+	}
 	if l.hasURLLocked(cleanURL) {
 		return DownloadItem{}, errors.New("that URL is already in the queue")
 	}
-	return l.enqueueLocked(cleanURL)
+	return l.enqueueLocked(cleanURL, queueID)
 }
 
-func (l *downloadEngineLoop) enqueueLocked(cleanURL string) (DownloadItem, error) {
+func (l *downloadEngineLoop) enqueueLocked(cleanURL string, queueID string) (DownloadItem, error) {
 	item := DownloadItem{
 		ID:          formatID(l.nextID),
 		URL:         cleanURL,
 		State:       StateQueued,
+		QueueID:     queueID,
 		Destination: l.config.DownloadDirectory,
 		AddedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 	}
@@ -491,6 +516,137 @@ func (l *downloadEngineLoop) enqueueLocked(cleanURL string) (DownloadItem, error
 	return item, nil
 }
 
+// queueLocked returns the queue with this ID, or nil when it is gone.
+// Callers must hold l.mu.
+func (l *downloadEngineLoop) queueLocked(id string) *DownloadQueue {
+	for index := range l.queues {
+		if l.queues[index].ID == id {
+			return &l.queues[index]
+		}
+	}
+	return nil
+}
+
+// queueRunningLocked reports whether downloads in this queue may be started.
+// An unknown queue is treated as stopped so nothing starts behind a queue that
+// was deleted. Callers must hold l.mu.
+func (l *downloadEngineLoop) queueRunningLocked(id string) bool {
+	queue := l.queueLocked(id)
+	return queue != nil && queue.Running
+}
+
+func (l *downloadEngineLoop) queueExists(id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.queueLocked(id) == nil {
+		return errors.New("that queue no longer exists")
+	}
+	return nil
+}
+
+func (l *downloadEngineLoop) createQueue(name string) (DownloadQueue, error) {
+	trimmed, err := validateQueueName(name)
+	if err != nil {
+		return DownloadQueue{}, err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, queue := range l.queues {
+		if strings.EqualFold(queue.Name, trimmed) {
+			return DownloadQueue{}, fmt.Errorf("a queue named %q already exists", queue.Name)
+		}
+	}
+	queue := DownloadQueue{ID: fmt.Sprintf("queue-%d", l.nextQueueID), Name: trimmed, Running: false}
+	l.nextQueueID++
+	l.queues = append(l.queues, queue)
+	l.SignalDirty()
+	return queue, nil
+}
+
+func (l *downloadEngineLoop) renameQueue(id string, name string) error {
+	trimmed, err := validateQueueName(name)
+	if err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	queue := l.queueLocked(id)
+	if queue == nil {
+		return errors.New("that queue no longer exists")
+	}
+	for _, other := range l.queues {
+		if other.ID != id && strings.EqualFold(other.Name, trimmed) {
+			return fmt.Errorf("a queue named %q already exists", other.Name)
+		}
+	}
+	queue.Name = trimmed
+	l.SignalDirty()
+	return nil
+}
+
+// deleteQueue refuses a queue that still holds downloads so removing a queue
+// never silently relocates anyone's transfers.
+func (l *downloadEngineLoop) deleteQueue(id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	queue := l.queueLocked(id)
+	if queue == nil {
+		return errors.New("that queue no longer exists")
+	}
+	if queue.BuiltIn {
+		return errors.New("this queue is built in and cannot be deleted")
+	}
+	for _, item := range l.items {
+		if item.QueueID == id {
+			return errors.New("move or remove this queue's downloads before deleting it")
+		}
+	}
+	for index := range l.queues {
+		if l.queues[index].ID == id {
+			l.queues = append(l.queues[:index], l.queues[index+1:]...)
+			break
+		}
+	}
+	l.SignalDirty()
+	return nil
+}
+
+// setQueueRunning starts or stops a queue. The pass that follows applies it:
+// stopping pauses whatever was moving in that queue, starting lets its
+// downloads back into the scheduler.
+func (l *downloadEngineLoop) setQueueRunning(id string, running bool) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	queue := l.queueLocked(id)
+	if queue == nil {
+		return errors.New("that queue no longer exists")
+	}
+	if queue.Running == running {
+		return nil
+	}
+	queue.Running = running
+	l.SignalDirty()
+	return nil
+}
+
+func (l *downloadEngineLoop) setItemQueue(id string, queueID string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.queueLocked(queueID) == nil {
+		return errors.New("that queue no longer exists")
+	}
+	index := l.itemIndex(id)
+	if index < 0 {
+		return errors.New("download was not found")
+	}
+	if l.items[index].QueueID == queueID {
+		return nil
+	}
+	l.items[index].QueueID = queueID
+	l.SignalDirty()
+	return nil
+}
+
 func (l *downloadEngineLoop) move(id string, direction int) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -498,8 +654,10 @@ func (l *downloadEngineLoop) move(id string, direction int) error {
 	if index < 0 || l.items[index].State != StateQueued {
 		return errors.New("only queued downloads can be moved")
 	}
+	// Priority is per queue: swapping across queue boundaries would reorder
+	// lists the user is not looking at.
 	for adjacent := index + direction; adjacent >= 0 && adjacent < len(l.items); adjacent += direction {
-		if l.items[adjacent].State == StateQueued {
+		if l.items[adjacent].State == StateQueued && l.items[adjacent].QueueID == l.items[index].QueueID {
 			l.items[index], l.items[adjacent] = l.items[adjacent], l.items[index]
 			l.SignalDirty()
 			return nil
@@ -529,6 +687,8 @@ func (l *downloadEngineLoop) controlLocked(index int, from, state DownloadState,
 		return err
 	}
 	l.items[index].State = state
+	// A user decision overrides whatever the queue stop recorded.
+	l.items[index].QueuePaused = false
 	if state == StatePaused {
 		delete(l.retryAt, l.items[index].ID)
 	}
@@ -542,6 +702,9 @@ func (l *downloadEngineLoop) resumeItem(id string) error {
 	index := l.itemIndex(id)
 	if index < 0 {
 		return errors.New("download was not found")
+	}
+	if !l.queueRunningLocked(l.items[index].QueueID) {
+		return errors.New("this queue is stopped — start it to resume downloads")
 	}
 	if l.items[index].State == StatePaused && l.activeCountLocked() >= l.config.ActiveLimit {
 		return errors.New("active download limit reached")
@@ -686,11 +849,11 @@ func (l *downloadEngineLoop) markEngineExitLocked() {
 	l.SignalDirty()
 }
 
-// refreshStatusesAndScheduleLocked refreshes engine status for the downloads
-// this pass cares about, then schedules whatever is eligible. With activeOnly
-// it touches only downloads that are moving, which is what makes the fast pass
-// cheap: a queue full of waiting items costs no engine round-trips. Callers
-// must hold l.mu.
+// refreshStatusesAndScheduleLocked applies queue start/stop, refreshes engine
+// status for the downloads this pass cares about, and schedules whatever is
+// eligible. With activeOnly it touches only downloads that are moving, which
+// is what makes the fast pass cheap: a queue full of waiting items costs no
+// engine round-trips. Callers must hold l.mu.
 func (l *downloadEngineLoop) refreshStatusesAndScheduleLocked(activeOnly bool) bool {
 	changed := false
 	for index := range l.items {
@@ -719,16 +882,53 @@ func (l *downloadEngineLoop) refreshStatusesAndScheduleLocked(activeOnly bool) b
 			changed = true
 		}
 	}
+	// Enforce after the refresh so a download the engine brought back up in a
+	// stopped queue is stopped in the same pass instead of one tick later.
+	if l.enforceQueueStatesLocked() {
+		changed = true
+	}
 	scheduled := l.scheduleLocked()
 	return changed || scheduled
 }
 
+// enforceQueueStatesLocked stops downloads that are still moving in a queue
+// that is no longer running. That happens when the user stops a queue and
+// again after a restart, when the engine may have come back up running them.
+// Callers must hold l.mu.
+func (l *downloadEngineLoop) enforceQueueStatesLocked() bool {
+	changed := false
+	for index := range l.items {
+		item := &l.items[index]
+		if item.State != StateActive || l.queueRunningLocked(item.QueueID) {
+			continue
+		}
+		if item.GID != "" {
+			if err := l.engine.Pause(item.GID); err != nil {
+				// Keep it visible as active; the next pass retries the stop.
+				continue
+			}
+		}
+		item.State = StatePaused
+		item.QueuePaused = true
+		item.DownloadSpeed = 0
+		delete(l.retryAt, item.ID)
+		changed = true
+	}
+	return changed
+}
+
+// scheduleLocked starts eligible downloads, FIFO, while capacity lasts. Only
+// queues that are running may start work; everything else waits, including
+// downloads the queue stop paused. Callers must hold l.mu.
 func (l *downloadEngineLoop) scheduleLocked() bool {
 	active := l.activeCountLocked()
 	now := time.Now()
 	changed := false
 	for index := range l.items {
 		item := &l.items[index]
+		if !l.queueRunningLocked(item.QueueID) {
+			continue
+		}
 		if item.State == StateFailed {
 			if item.Attempts > 0 && item.Attempts < l.config.MaxRetries && !now.Before(l.retryAt[item.ID]) && active < l.config.ActiveLimit {
 				if l.retryLocked(index) == nil {
@@ -739,7 +939,10 @@ func (l *downloadEngineLoop) scheduleLocked() bool {
 			}
 			continue
 		}
-		if item.State != StateQueued || active >= l.config.ActiveLimit {
+		// A queue-paused item is one the queue stop put to sleep; starting the
+		// queue puts it back in line alongside items that were never started.
+		resumable := item.State == StateQueued || (item.State == StatePaused && item.QueuePaused)
+		if !resumable || active >= l.config.ActiveLimit {
 			continue
 		}
 		if l.resumeLocked(index) == nil {
@@ -758,6 +961,7 @@ func (l *downloadEngineLoop) resumeLocked(index int) error {
 		return err
 	}
 	l.items[index].State = StateActive
+	l.items[index].QueuePaused = false
 	return nil
 }
 
@@ -847,7 +1051,14 @@ func (l *downloadEngineLoop) persistedStateLocked() persistedState {
 	for id, deadline := range l.retryAt {
 		retryAt[id] = deadline.UTC().Format(time.RFC3339Nano)
 	}
-	return persistedState{Items: append([]DownloadItem(nil), l.items...), Configuration: l.config, NextID: l.nextID, RetryAt: retryAt}
+	return persistedState{
+		Items:         append([]DownloadItem(nil), l.items...),
+		Queues:        append([]DownloadQueue(nil), l.queues...),
+		NextQueueID:   l.nextQueueID,
+		Configuration: l.config,
+		NextID:        l.nextID,
+		RetryAt:       retryAt,
+	}
 }
 
 // saveStateLocked writes the store outside the queue lock so disk I/O does

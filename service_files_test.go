@@ -10,7 +10,7 @@ import (
 func completeItem(t *testing.T, service *DownloadService, rawURL, path string) DownloadItem {
 	t.Helper()
 	engine := service.loop.engine.(*FakeEngine)
-	item, err := service.AddURL(rawURL)
+	item, err := service.AddURL(rawURL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +78,8 @@ func TestDeleteItemToleratesMissingFile(t *testing.T) {
 func TestClearCompletedKeepsActiveAndFailed(t *testing.T) {
 	service := NewDownloadService(NewFakeEngine())
 	engine := service.loop.engine.(*FakeEngine)
-	first, _ := service.AddURL("https://example.com/one")
-	second, _ := service.AddURL("https://example.com/two")
+	first, _ := service.AddURL("https://example.com/one", "")
+	second, _ := service.AddURL("https://example.com/two", "")
 	if err := service.loop.Tick(); err != nil {
 		t.Fatal(err)
 	}

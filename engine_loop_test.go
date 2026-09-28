@@ -41,7 +41,7 @@ func (e *snapshotTrackingEngine) Status(string) (EngineStatus, error) {
 func TestSnapshotIsPure(t *testing.T) {
 	engine := &snapshotTrackingEngine{FakeEngine: NewFakeEngine()}
 	service := NewDownloadService(engine)
-	if _, err := service.AddURL("https://example.com/file"); err != nil {
+	if _, err := service.AddURL("https://example.com/file", ""); err != nil {
 		t.Fatal(err)
 	}
 	service.Snapshot()
@@ -58,7 +58,7 @@ func TestEngineLoopBatchesDirtySignals(t *testing.T) {
 		"https://example.com/two",
 		"https://example.com/three",
 	} {
-		if _, err := service.AddURL(rawURL); err != nil {
+		if _, err := service.AddURL(rawURL, ""); err != nil {
 			t.Fatal(err)
 		}
 	}

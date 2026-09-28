@@ -142,7 +142,7 @@ func TestServiceMarksActiveItemsFailedAfterUnexpectedEngineExit(t *testing.T) {
 	engine := newExitFakeEngine()
 	store := NewJSONStateStore(filepath.Join(t.TempDir(), "state.json"))
 	service := NewDownloadServiceWithStore(engine, store)
-	item, err := service.AddURL("https://example.com/file")
+	item, err := service.AddURL("https://example.com/file", "")
 	if err != nil {
 		t.Fatal(err)
 	}
