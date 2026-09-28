@@ -32,8 +32,8 @@ type downloadEngineLoop struct {
 	config  Configuration
 	nextID  int
 	retryAt map[string]time.Time
-
-	saveMu sync.Mutex
+	emitted *emittedState
+	saveMu  sync.Mutex
 
 	dirty           chan struct{}
 	wake            chan struct{}
@@ -44,7 +44,39 @@ type downloadEngineLoop struct {
 	recoveryPending bool
 	exitPending     bool
 	exitHandled     bool
+
+	// Updates reach the frontend on their own goroutine because delivering an
+	// event to the webview can block on the UI thread; scheduling must never
+	// wait on the frontend.
+	notifyMu sync.Mutex
+	notify   func(event string, data any)
+	notifyCh chan notifyPayload
+	pending  *pendingNotify
 }
+
+type notifyPayload struct {
+	event string
+	data  any
+}
+
+// pendingNotify is what the last pass wants to tell the frontend: a full
+// snapshot when the shape of the queue changed, counter deltas otherwise.
+type pendingNotify struct {
+	snapshot *ServiceSnapshot
+	progress []ItemProgress
+}
+
+// emittedState is the last update the frontend received. Comparing against it
+// is how the loop decides between a snapshot and a progress-only update.
+type emittedState struct {
+	items  []DownloadItem
+	config Configuration
+}
+
+// fastRefreshInterval is how often the loop pulls fresh transfer counters from
+// the engine. It only polls downloads that are moving, so an idle queue costs
+// nothing, and it never touches persistence.
+var fastRefreshInterval = 500 * time.Millisecond
 
 func newDownloadEngineLoop(engine DownloadEngine, store StateStore) *downloadEngineLoop {
 	return &downloadEngineLoop{
@@ -76,6 +108,163 @@ func (l *downloadEngineLoop) SignalDirty() {
 	}
 }
 
+// setNotify installs the channel the frontend listens on. Delivery runs on its
+// own goroutine because pushing an event into the webview can block on the UI
+// thread, and the scheduling loop must never wait for the UI.
+func (l *downloadEngineLoop) setNotify(notify func(event string, data any)) {
+	l.notifyMu.Lock()
+	defer l.notifyMu.Unlock()
+	l.notify = notify
+	if notify == nil || l.notifyCh != nil {
+		return
+	}
+	l.notifyCh = make(chan notifyPayload, 64)
+	go l.drainNotifications(l.notifyCh)
+}
+
+func (l *downloadEngineLoop) drainNotifications(ch chan notifyPayload) {
+	for payload := range ch {
+		l.notifyMu.Lock()
+		notify := l.notify
+		l.notifyMu.Unlock()
+		if notify != nil {
+			notify(payload.event, payload.data)
+		}
+	}
+}
+
+// sendNotify never blocks. A frontend that stops reading only loses updates,
+// and its slow safety poll reconciles the state afterwards.
+func (l *downloadEngineLoop) sendNotify(event string, data any) {
+	l.notifyMu.Lock()
+	ch := l.notifyCh
+	l.notifyMu.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- notifyPayload{event: event, data: data}:
+	default:
+	}
+}
+
+func (l *downloadEngineLoop) stageNotify(update *pendingNotify) {
+	l.notifyMu.Lock()
+	defer l.notifyMu.Unlock()
+	if update.snapshot != nil {
+		// A snapshot supersedes anything staged: it carries every counter.
+		l.pending = update
+		return
+	}
+	if l.pending == nil {
+		l.pending = update
+		return
+	}
+	if l.pending.snapshot != nil {
+		return
+	}
+	l.pending.progress = append(l.pending.progress, update.progress...)
+}
+
+// flushNotify delivers what the last pass staged. It runs with the queue lock
+// released so a slow webview cannot stall scheduling.
+func (l *downloadEngineLoop) flushNotify() {
+	l.notifyMu.Lock()
+	pending := l.pending
+	l.pending = nil
+	l.notifyMu.Unlock()
+	if pending == nil {
+		return
+	}
+	if pending.snapshot != nil {
+		l.sendNotify(EventQueueSnapshot, *pending.snapshot)
+		return
+	}
+	if len(pending.progress) > 0 {
+		l.sendNotify(EventQueueProgress, pending.progress)
+	}
+}
+
+// prepareNotifyLocked decides what the frontend is owed after this pass: a
+// full snapshot when the shape of the queue changed, otherwise only the
+// counters that moved. Callers must hold l.mu.
+func (l *downloadEngineLoop) prepareNotifyLocked() {
+	l.notifyMu.Lock()
+	notify := l.notify
+	l.notifyMu.Unlock()
+	if notify == nil {
+		// Nobody is listening yet. The first pass after setNotify will find
+		// nothing recorded and send a full snapshot.
+		return
+	}
+	if l.emitted == nil || l.structureChangedLocked() {
+		snapshot := l.snapshotLocked()
+		l.emitted = &emittedState{
+			items:  snapshot.Items,
+			config: snapshot.Configuration,
+		}
+		l.stageNotify(&pendingNotify{snapshot: &snapshot})
+		return
+	}
+	if delta := l.counterDeltaLocked(); len(delta) > 0 {
+		l.stageNotify(&pendingNotify{progress: delta})
+	}
+}
+
+// structureChangedLocked reports whether anything other than transfer
+// counters moved. Callers must hold l.mu.
+func (l *downloadEngineLoop) structureChangedLocked() bool {
+	emitted := l.emitted
+	if len(l.items) != len(emitted.items) {
+		return true
+	}
+	if l.config != emitted.config {
+		return true
+	}
+	for index := range l.items {
+		if itemStructureDiffers(l.items[index], emitted.items[index]) {
+			return true
+		}
+	}
+	return false
+}
+
+func itemStructureDiffers(left, right DownloadItem) bool {
+	return left.ID != right.ID ||
+		left.URL != right.URL ||
+		left.GID != right.GID ||
+		left.State != right.State ||
+		left.Destination != right.Destination ||
+		left.Path != right.Path ||
+		left.AddedAt != right.AddedAt
+}
+
+// counterDeltaLocked returns the rows whose transfer counters moved since the
+// last update and records them as sent. Callers must hold l.mu and must have
+// checked that the queue structure is unchanged.
+func (l *downloadEngineLoop) counterDeltaLocked() []ItemProgress {
+	var delta []ItemProgress
+	for index := range l.items {
+		item, sent := &l.items[index], &l.emitted.items[index]
+		if item.TotalBytes == sent.TotalBytes &&
+			item.CompletedBytes == sent.CompletedBytes &&
+			item.DownloadSpeed == sent.DownloadSpeed &&
+			item.Attempts == sent.Attempts {
+			continue
+		}
+		delta = append(delta, ItemProgress{
+			ID:             item.ID,
+			State:          item.State,
+			TotalBytes:     item.TotalBytes,
+			CompletedBytes: item.CompletedBytes,
+			DownloadSpeed:  item.DownloadSpeed,
+			Attempts:       item.Attempts,
+		})
+		*sent = *item
+	}
+	return delta
+}
+
 func (l *downloadEngineLoop) Start() {
 	if l.stop != nil {
 		return
@@ -87,7 +276,9 @@ func (l *downloadEngineLoop) Start() {
 
 func (l *downloadEngineLoop) run() {
 	ticker := time.NewTicker(30 * time.Second)
+	fast := time.NewTicker(fastRefreshInterval)
 	defer ticker.Stop()
+	defer fast.Stop()
 	defer close(l.done)
 	_ = l.Tick()
 	for {
@@ -96,6 +287,9 @@ func (l *downloadEngineLoop) run() {
 			l.mu.Lock()
 			_ = l.tick(true)
 			l.mu.Unlock()
+			l.flushNotify()
+		case <-fast.C:
+			l.refreshPass()
 		case <-l.wake:
 			timer := time.NewTimer(time.Millisecond)
 			<-timer.C
@@ -129,10 +323,29 @@ func (l *downloadEngineLoop) Stop() {
 	l.done = nil
 }
 
+// Tick runs one full pass — recovery, engine-exit handling, a status refresh
+// over every download, scheduling, persistence — and then delivers whatever
+// update the pass staged for the frontend.
 func (l *downloadEngineLoop) Tick() error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.tick(false)
+	err := l.tick(false)
+	l.mu.Unlock()
+	l.flushNotify()
+	return err
+}
+
+// refreshPass is the fast pass. It pulls fresh counters for the downloads that
+// are actually moving, schedules whatever is now eligible, and stages the
+// counter update for the frontend. It never reads or writes the store, so
+// progress stays current without extra disk writes.
+func (l *downloadEngineLoop) refreshPass() {
+	l.mu.Lock()
+	if l.refreshStatusesAndScheduleLocked(true) {
+		l.SignalDirty()
+	}
+	l.prepareNotifyLocked()
+	l.mu.Unlock()
+	l.flushNotify()
 }
 
 func (l *downloadEngineLoop) tick(forceSave bool) error {
@@ -158,10 +371,11 @@ func (l *downloadEngineLoop) tick(forceSave bool) error {
 		}
 	}
 
-	changed := l.refreshStatusesAndScheduleLocked()
+	changed := l.refreshStatusesAndScheduleLocked(false)
 	if changed || reconciled {
 		l.SignalDirty()
 	}
+	l.prepareNotifyLocked()
 
 	shouldSave := forceSave
 	select {
@@ -229,10 +443,14 @@ func (l *downloadEngineLoop) setDownloadDirectory(directory string) {
 	l.config.DownloadDirectory = directory
 }
 
+func (l *downloadEngineLoop) snapshotLocked() ServiceSnapshot {
+	return ServiceSnapshot{Items: append([]DownloadItem(nil), l.items...), Configuration: l.config}
+}
+
 func (l *downloadEngineLoop) snapshot() ServiceSnapshot {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return ServiceSnapshot{Items: append([]DownloadItem(nil), l.items...), Configuration: l.config}
+	return l.snapshotLocked()
 }
 
 func (l *downloadEngineLoop) itemsSnapshot() []DownloadItem {
@@ -468,9 +686,17 @@ func (l *downloadEngineLoop) markEngineExitLocked() {
 	l.SignalDirty()
 }
 
-func (l *downloadEngineLoop) refreshStatusesAndScheduleLocked() bool {
+// refreshStatusesAndScheduleLocked refreshes engine status for the downloads
+// this pass cares about, then schedules whatever is eligible. With activeOnly
+// it touches only downloads that are moving, which is what makes the fast pass
+// cheap: a queue full of waiting items costs no engine round-trips. Callers
+// must hold l.mu.
+func (l *downloadEngineLoop) refreshStatusesAndScheduleLocked(activeOnly bool) bool {
 	changed := false
 	for index := range l.items {
+		if activeOnly && l.items[index].State != StateActive {
+			continue
+		}
 		if l.items[index].State == StatePaused || l.items[index].State == StateFailed || l.items[index].State == StateComplete || l.items[index].GID == "" {
 			continue
 		}

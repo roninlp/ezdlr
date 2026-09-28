@@ -89,6 +89,12 @@ func run() error {
 	})
 	app.RegisterService(application.NewService(NewApp(app, service)))
 
+	// The engine loop pushes queue updates instead of making the UI poll, so
+	// the window only ever receives the rows that changed.
+	service.setNotify(func(event string, data any) {
+		app.Event.Emit(event, data)
+	})
+
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "ezdlr",
 		Width:            980,

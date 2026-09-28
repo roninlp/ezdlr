@@ -65,6 +65,27 @@ type ServiceSnapshot struct {
 	Configuration Configuration  `json:"configuration"`
 }
 
+// ItemProgress is the counter-only half of the queue update. It is what the
+// engine loop emits while downloads are moving: a snapshot event tells the UI
+// the shape of the queue changed, a progress event only refreshes bytes,
+// speed, and state for the rows that moved.
+type ItemProgress struct {
+	ID             string        `json:"id"`
+	State          DownloadState `json:"state"`
+	TotalBytes     int64         `json:"totalBytes"`
+	CompletedBytes int64         `json:"completedBytes"`
+	DownloadSpeed  int64         `json:"downloadSpeed"`
+	Attempts       int           `json:"attempts"`
+	Path           string        `json:"path,omitempty"`
+}
+
+// The engine loop pushes these to the frontend so the UI never has to poll for
+// fresh transfer counters.
+const (
+	EventQueueSnapshot = "ezdlr:queue:snapshot"
+	EventQueueProgress = "ezdlr:queue:progress"
+)
+
 type DownloadEngine interface {
 	Add(url string, destination string) (string, error)
 	Status(gid string) (EngineStatus, error)
@@ -123,6 +144,12 @@ func (s *DownloadService) AddURL(rawURL string) (DownloadItem, error) {
 }
 
 func (s *DownloadService) Snapshot() ServiceSnapshot { return s.loop.snapshot() }
+
+// setNotify installs the backend-to-frontend push channel. It is unexported on
+// purpose: it takes a Go function, so it must never become a Wails binding.
+func (s *DownloadService) setNotify(notify func(event string, data any)) {
+	s.loop.setNotify(notify)
+}
 
 func (s *DownloadService) MoveUp(id string) error { return s.loop.move(id, -1) }
 
