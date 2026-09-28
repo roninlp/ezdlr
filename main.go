@@ -7,15 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-//go:embed frontend/dist/*
+//go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
@@ -55,30 +51,38 @@ func main() {
 	}
 	service.setDownloadDirectory(downloadDirectory)
 	service.Start()
-	app := NewApp(service)
 
-	err = wails.Run(&options.App{
-		Title:     "ezdlr",
-		Width:     980,
-		Height:    680,
-		MinWidth:  640,
-		MinHeight: 480,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	app := application.New(application.Options{
+		Name:        "ezdlr",
+		Description: "A small native download manager for direct HTTP and HTTPS links",
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
-		BackgroundColour: &options.RGBA{R: 14, G: 18, B: 24, A: 1},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
-		Bind:             []interface{}{app},
-		Linux: &linux.Options{
-			WindowIsTranslucent: false,
+		Linux: application.LinuxOptions{
+			ApplicationID: "com.ezdlr.app",
+			// Keep the Wayland app id matching the installed .desktop file so
+			// the launcher icon is grouped with the running window.
+			ProgramName: "ezdlr",
+		},
+	})
+	app.RegisterService(application.NewService(NewApp(app, service)))
+
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "ezdlr",
+		Width:            980,
+		Height:           680,
+		MinWidth:         640,
+		MinHeight:        480,
+		BackgroundColour: application.NewRGB(14, 18, 24),
+		Linux: application.LinuxWindow{
 			// WebKitGTK's Wayland DMABUF renderer is not reliable on all
 			// supported Mesa/driver combinations. Software compositing keeps
 			// the app usable without requiring a launcher environment override.
-			WebviewGpuPolicy: linux.WebviewGpuPolicyNever,
+			WebviewGpuPolicy: application.WebviewGpuPolicyNever,
 		},
 	})
-	if err != nil {
+
+	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -93,7 +97,7 @@ func resolveAria2Binary(executable string) (string, error) {
 			return bundled, nil
 		}
 	}
-	if strings.Contains(filepath.Base(executable), "-dev-") {
+	if !productionBuild {
 		if system, err := exec.LookPath("aria2c"); err == nil {
 			return system, nil
 		}

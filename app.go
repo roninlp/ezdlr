@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type App struct {
@@ -9,18 +9,16 @@ type App struct {
 	clipboard ClipboardReader
 }
 
-func NewApp(service *DownloadService) *App {
-	return NewAppWithClipboardReader(service, NewWailsClipboardReader(service))
+func NewApp(wailsApp *application.App, service *DownloadService) *App {
+	return NewAppWithClipboardReader(service, NewWailsClipboardReader(wailsApp, service))
 }
 
 func NewAppWithClipboardReader(service *DownloadService, clipboard ClipboardReader) *App {
 	return &App{DownloadService: service, clipboard: clipboard}
 }
 
-func (a *App) startup(ctx context.Context) { a.clipboard.Startup(ctx) }
-
-func (a *App) shutdown(context.Context) {
-	_ = a.DownloadService.Shutdown()
+func (a *App) ServiceShutdown() error {
+	return a.DownloadService.Shutdown()
 }
 
 func (a *App) ReviewClipboard(text string) ClipboardReview {

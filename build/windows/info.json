@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "ezdlr",
+			"FileDescription": "A small native download manager for direct HTTP and HTTPS links",
+			"LegalCopyright": "© 2026, ezdlr",
+			"ProductName": "ezdlr",
+			"Comments": "Direct HTTP and HTTPS downloads via aria2"
+		}
+	}
+}

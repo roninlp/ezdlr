@@ -1,18 +1,23 @@
 {
   "name": "ezdlr-frontend",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "build:dev": "vite build --minify false --mode development",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.9.2",
+    "typescript": "^7.0.2",
     "vite": "^8.2.0",
     "vite-plugin-solid": "^2.11.14"
   },
   "dependencies": {
+    "@types/node": "^26.6.3",
+    "@wailsio/runtime": "3.0.0-beta.26",
     "solid-js": "^1.9.14"
   }
 }

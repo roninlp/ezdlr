@@ -24,15 +24,25 @@ jobs:
         include:
           - name: linux-amd64
             os: ubuntu-24.04
-            platform: linux/amd64
+            goos: linux
+            goarch: amd64
+            tags: production,gtk3
+            cgo: "1"
+            output: ezdlr
           - name: windows-amd64
             os: windows-latest
-            platform: windows/amd64
-            arch: amd64
+            goos: windows
+            goarch: amd64
+            tags: production
+            cgo: "0"
+            output: ezdlr.exe
           - name: macos-arm64
             os: macos-14
-            platform: darwin/arm64
-            arch: arm64
+            goos: darwin
+            goarch: arm64
+            tags: production
+            cgo: "1"
+            output: ezdlr
 
     steps:
       - name: Check out source
@@ -66,10 +76,6 @@ jobs:
         shell: pwsh
         run: |
           choco install aria2 --no-progress --yes
-          if (Test-Path 'C:\mingw64\bin') {
-            Add-Content $env:GITHUB_PATH 'C:\mingw64\bin'
-          }
-          gcc --version
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
@@ -83,29 +89,31 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Install Wails CLI
-        shell: bash
-        run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
       - name: Build application
         shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
         run: |
-          wails build \
-            -clean \
-            -nopackage \
-            -platform "${{ matrix.platform }}" \
-            -o ezdlr \
+          LDFLAGS="-s -w"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            LDFLAGS="$LDFLAGS -H windowsgui"
+          fi
+          go build \
+            -tags "${{ matrix.tags }}" \
             -trimpath \
-            -ldflags "-s -w"
+            -buildvcs=false \
+            -ldflags "$LDFLAGS" \
+            -o "bin/${{ matrix.output }}" .
 
       - name: Package Linux binary
         if: runner.os == 'Linux'
         shell: bash
         run: |
           mkdir -p release/ezdlr-linux-amd64
-          cp build/bin/ezdlr release/ezdlr-linux-amd64/ezdlr
+          cp bin/ezdlr release/ezdlr-linux-amd64/ezdlr
           cp "$(command -v aria2c)" release/ezdlr-linux-amd64/aria2c
           chmod 755 release/ezdlr-linux-amd64/ezdlr release/ezdlr-linux-amd64/aria2c
           tar -czf release/ezdlr-linux-amd64.tar.gz -C release ezdlr-linux-amd64
@@ -117,7 +125,7 @@ jobs:
           mkdir -p AppDir/usr/bin AppDir/usr/lib/ezdlr
           mkdir -p AppDir/usr/share/applications
           mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps
-          cp build/bin/ezdlr AppDir/usr/bin/ezdlr
+          cp bin/ezdlr AppDir/usr/bin/ezdlr
           cp "$(command -v aria2c)" AppDir/usr/lib/ezdlr/aria2c
           cp packaging/arch/ezdlr.desktop AppDir/usr/share/applications/ezdlr.desktop
           cp packaging/arch/ezdlr.svg AppDir/usr/share/icons/hicolor/scalable/apps/ezdlr.svg
@@ -145,7 +153,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release\ezdlr-windows-amd64 | Out-Null
-          Copy-Item build\bin\ezdlr release\ezdlr-windows-amd64\ezdlr.exe
+          Copy-Item bin\ezdlr.exe release\ezdlr-windows-amd64\ezdlr.exe
           Copy-Item (Get-Command aria2c.exe).Source release\ezdlr-windows-amd64\aria2c.exe
           Compress-Archive -Path release\ezdlr-windows-amd64 -DestinationPath release\ezdlr-windows-amd64.zip
 
@@ -153,9 +161,9 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          app="release/ezdlr-macos-${{ matrix.arch }}.app"
+          app="release/ezdlr-macos-${{ matrix.goarch }}.app"
           mkdir -p "$app/Contents/MacOS"
-          cp build/bin/ezdlr "$app/Contents/MacOS/ezdlr"
+          cp bin/ezdlr "$app/Contents/MacOS/ezdlr"
           cp "$(command -v aria2c)" "$app/Contents/MacOS/aria2c"
           cat > "$app/Contents/Info.plist" <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -174,11 +182,13 @@ jobs:
             <string>APPL</string>
             <key>CFBundleVersion</key>
             <string>${{ github.run_number }}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
           </dict>
           </plist>
           EOF
           chmod 755 "$app/Contents/MacOS/ezdlr" "$app/Contents/MacOS/aria2c"
-          ditto -c -k --sequesterRsrc --keepParent "$app" "release/ezdlr-macos-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release/ezdlr-macos-${{ matrix.goarch }}.zip"
 
       - name: Upload packaged binary
         uses: actions/upload-artifact@v4

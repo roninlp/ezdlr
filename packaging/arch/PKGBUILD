@@ -29,7 +29,7 @@ build() {
   npm run build
 
   cd "$srcdir/ezdlr"
-  go build -tags webkit2_41 -trimpath -ldflags="-s -w" -o "$srcdir/ezdlr" .
+  go build -tags production,gtk3 -trimpath -ldflags="-s -w" -o "$srcdir/ezdlr" .
 }
 
 package() {

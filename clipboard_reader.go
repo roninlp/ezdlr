@@ -1,14 +1,13 @@
 package main
 
 import (
-	"context"
+	"errors"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // ClipboardReader isolates the Wails runtime from clipboard intake behavior.
 type ClipboardReader interface {
-	Startup(context.Context)
 	ReadClipboard() (string, error)
 	ReviewClipboard(string) ClipboardReview
 	ConfirmClipboard(ClipboardReview) ClipboardBatchResult
@@ -17,17 +16,19 @@ type ClipboardReader interface {
 
 type WailsClipboardReader struct {
 	serviceClipboardReader
-	context context.Context
+	app *application.App
 }
 
-func NewWailsClipboardReader(service *DownloadService) *WailsClipboardReader {
-	return &WailsClipboardReader{serviceClipboardReader: serviceClipboardReader{service: service}}
+func NewWailsClipboardReader(app *application.App, service *DownloadService) *WailsClipboardReader {
+	return &WailsClipboardReader{serviceClipboardReader: serviceClipboardReader{service: service}, app: app}
 }
-
-func (r *WailsClipboardReader) Startup(ctx context.Context) { r.context = ctx }
 
 func (r *WailsClipboardReader) ReadClipboard() (string, error) {
-	return runtime.ClipboardGetText(r.context)
+	text, ok := r.app.Clipboard.Text()
+	if !ok {
+		return "", errors.New("the clipboard does not contain text")
+	}
+	return text, nil
 }
 
 type serviceClipboardReader struct{ service *DownloadService }
@@ -52,8 +53,6 @@ type CannedClipboardReader struct {
 func NewCannedClipboardReader(service *DownloadService, text string) *CannedClipboardReader {
 	return &CannedClipboardReader{serviceClipboardReader: serviceClipboardReader{service: service}, text: text}
 }
-
-func (r *CannedClipboardReader) Startup(context.Context) {}
 
 func (r *CannedClipboardReader) ReadClipboard() (string, error) { return r.text, nil }
 
