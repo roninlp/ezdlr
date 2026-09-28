@@ -11,7 +11,7 @@ info:
   description: "A small native download manager for direct HTTP and HTTPS links"
   copyright: "© 2026, ezdlr"
   comments: "Direct HTTP and HTTPS downloads via aria2"
-  version: "0.1.0"
+  version: "0.2.0"
 
 # Dev mode configuration
 dev_mode:
