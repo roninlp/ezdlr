@@ -632,6 +632,267 @@ button:disabled { cursor: default; }
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ———————————————————————————————— queue switcher ———————————————————————————————— */
+
+.queues-block { margin-bottom: 34px; }
+.queues-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.queue-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px dashed var(--line2);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--mute);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.queue-new:hover { color: var(--paper); border-color: var(--signal); }
+.queue-new:disabled { opacity: 0.4; }
+
+.queues { display: flex; flex-wrap: wrap; gap: 10px; }
+.queue-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 176px;
+  padding: 13px 42px 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--raise);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.queue-card:hover { border-color: var(--line2); }
+.queue-card:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.queue-card[data-selected="true"] {
+  border-color: var(--signal);
+  background: rgba(240, 90, 60, 0.07);
+}
+.queue-card.creating { border-style: dashed; border-color: var(--line2); }
+.queue-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 580;
+  color: var(--paper);
+}
+.queue-card[data-stopped="true"] .queue-name { color: var(--mute); }
+.queue-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.queue-dot[data-running="true"] { background: var(--signal); }
+.queue-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.queue-meta b { color: var(--signal); font-weight: 500; }
+.queue-toggle {
+  position: absolute;
+  top: 11px;
+  right: 10px;
+  display: flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.queue-toggle:hover { background: var(--lift); color: var(--paper); }
+.queue-toggle:disabled { opacity: 0.4; }
+.queue-rename {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--paper);
+  font-size: 13.5px;
+  font-weight: 580;
+}
+.queue-rename::placeholder { color: var(--dim); font-weight: 400; }
+.queues-hint {
+  margin: 13px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+/* ———————————————————————————————— selection & bulk actions ———————————————————————————————— */
+
+/* Rows and queue cards are click targets: plain and shift-click must not paint
+   a text selection across them. */
+.row,
+.queue-card,
+.menu,
+.bulk-bar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.row[data-selected="true"] {
+  background: rgba(240, 90, 60, 0.08);
+  box-shadow: inset 2px 0 0 var(--signal);
+}
+.row-queue {
+  align-self: flex-start;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--raise);
+}
+.bulk-count {
+  margin-right: 4px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+.bulk-btn {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--mute);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.bulk-btn:hover { border-color: var(--line2); color: var(--paper); }
+.bulk-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.bulk-btn:disabled { opacity: 0.4; }
+.bulk-bar .select-wrap select { height: 30px; font-size: 10.5px; }
+
+/* ———————————————————————————————— context menu ———————————————————————————————— */
+
+.menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 214px;
+  padding: 6px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--raise);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.55);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--paper);
+  font-size: 12.5px;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+.menu-item:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover:not(:disabled) { background: rgba(229, 72, 77, 0.12); }
+.menu-item:disabled { opacity: 0.38; }
+.menu-item.static { color: var(--dim); }
+.menu-hint {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.menu-sep { height: 1px; margin: 6px 4px; background: var(--line); }
+.menu-group { position: relative; }
+.menu-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  color: var(--paper);
+  font-size: 12.5px;
+  cursor: default;
+}
+.menu-group:hover > .menu-label,
+.menu-group:focus-within > .menu-label { background: rgba(255, 255, 255, 0.06); }
+.menu-arrow { display: flex; color: var(--dim); }
+.menu-sub {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: -6px;
+  display: none;
+}
+.menu-group:hover > .menu-sub,
+.menu-group:focus-within > .menu-sub { display: block; }
+.menu-flip-sub .menu-sub { left: auto; right: calc(100% + 4px); }
+
+/* ———————————————————————————————— intake queue target ———————————————————————————————— */
+
+.intake-queue select {
+  height: 58px;
+  border-color: var(--line2);
+  background: var(--raise);
+}
+.intake-queue select:hover { border-color: var(--mute); }
+.review-dest {
+  margin: 0;
+  padding: 13px 20px 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.review-actions .select-wrap select { height: 38px; }
+
 /* ———————————————————————————————— a11y & small screens ———————————————————————————————— */
 
 button:focus-visible, input:focus-visible, select:focus-visible {
@@ -639,11 +900,20 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   outline-offset: 2px;
 }
 
+/* .field already draws its own ring through :focus-within, so the shared
+   input outline would put a second ring around the first one. */
+.field input:focus-visible { outline: none; }
+
 @media (max-width: 720px) {
   .page { padding: 0 18px; }
   .intake-form { flex-direction: column; }
   .btn-primary { width: 100%; }
+  .intake-queue select { width: 100%; }
+  .queue-card { min-width: 100%; }
+  .bulk-bar { width: 100%; }
   .intake-foot { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .review-head { flex-direction: column; align-items: flex-start; }
+  .review-actions { flex-wrap: wrap; }
   .row { padding: 14px; }
   .row-side { min-width: 0; }
   .controls { width: 100%; }
