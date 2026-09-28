@@ -289,7 +289,7 @@ func newSupervisedAria2Process(config ManagedAria2Config) (*supervisedAria2Proce
 	if err := os.Chmod(config.DataDirectory, 0700); err != nil {
 		return nil, fmt.Errorf("protect aria2 data directory: %w", err)
 	}
-	lock, err := os.OpenFile(filepath.Join(config.DataDirectory, "engine.lock"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	lock, err := acquireEngineLock(filepath.Join(config.DataDirectory, engineLockName))
 	if err != nil {
 		return nil, fmt.Errorf("aria2 engine is already running or its lock is unavailable: %w", err)
 	}

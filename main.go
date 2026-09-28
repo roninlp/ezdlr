@@ -15,17 +15,23 @@ import (
 var assets embed.FS
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	dataDirectory, err := os.UserConfigDir()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	downloadDirectory, err := defaultDownloadDirectory()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	var downloadEngine DownloadEngine
 	if wailsBindings {
@@ -33,7 +39,7 @@ func main() {
 	} else {
 		binaryPath, err := resolveAria2Binary(executable)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		downloadEngine, err = NewManagedAria2(ManagedAria2Config{
 			BinaryPath:        binaryPath,
@@ -41,13 +47,29 @@ func main() {
 			DownloadDirectory: downloadDirectory,
 		})
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
 	store := NewJSONStateStore(filepath.Join(dataDirectory, "ezdlr", "state.json"))
 	service := NewDownloadServiceWithStore(downloadEngine, store)
+
+	// The engine holds the profile lock, so every failure before the app is
+	// running has to hand it back — a hard exit here would leave a lock that
+	// blocks the next launch. Once app.Run is entered, Wails owns the shutdown
+	// order instead: closing the window or a signal runs ServiceShutdown, which
+	// stops the engine and releases the lock.
+	handsOffEngine := false
+	defer func() {
+		if handsOffEngine {
+			return
+		}
+		if err := service.Shutdown(); err != nil {
+			log.Printf("releasing engine after failed startup: %v", err)
+		}
+	}()
+
 	if err := service.Restore(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	service.setDownloadDirectory(downloadDirectory)
 	service.Start()
@@ -82,9 +104,8 @@ func main() {
 		},
 	})
 
-	if err := app.Run(); err != nil {
-		log.Fatal(err)
-	}
+	handsOffEngine = true
+	return app.Run()
 }
 
 func resolveAria2Binary(executable string) (string, error) {

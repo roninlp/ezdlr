@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -131,9 +132,9 @@ func TestSupervisedAria2ProcessSetupIsDeterministicWithoutAria2(t *testing.T) {
 	if err := os.MkdirAll(runtime, 0700); err != nil {
 		t.Fatal(err)
 	}
-	lockPath := filepath.Join(runtime, "engine.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
+	lockPath := filepath.Join(runtime, engineLockName)
+	// A lock written by a live instance still guards the profile.
+	if err := os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewManagedAria2(ManagedAria2Config{
@@ -143,7 +144,6 @@ func TestSupervisedAria2ProcessSetupIsDeterministicWithoutAria2(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("lock contention error = %v", err)
 	}
-	_ = lock.Close()
 	_ = os.Remove(lockPath)
 
 	binary := filepath.Join(root, "fake-aria2")
@@ -151,7 +151,7 @@ func TestSupervisedAria2ProcessSetupIsDeterministicWithoutAria2(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	_, err = NewManagedAria2(ManagedAria2Config{
+	_, err := NewManagedAria2(ManagedAria2Config{
 		BinaryPath:        binary,
 		DataDirectory:     runtime,
 		DownloadDirectory: filepath.Join(root, "downloads"),
